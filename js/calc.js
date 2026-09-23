@@ -1,0 +1,527 @@
+/* =========================================================================
+   Ranch math. Pure functions only — no DOM, no storage — so every number the
+   app shows can be unit-tested (see test/calc.test.js).
+
+   Dates are ISO strings 'YYYY-MM-DD' throughout; they are compared as strings
+   and split by hand so nothing shifts with the device's time zone.
+   ========================================================================= */
+
+/* ------------------------------ date helpers ----------------------------- */
+export const ymd = (d) => {
+  const z = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+};
+export const today = () => ymd(new Date());
+export const yearOf = (iso) => Number(String(iso).slice(0, 4));
+export const monthOf = (iso) => Number(String(iso).slice(5, 7));
+export const ymOf = (iso) => String(iso).slice(0, 7);
+const toUTC = (iso) => { const [y, m, d] = iso.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+export const daysBetween = (a, b) => Math.round((toUTC(b) - toUTC(a)) / 86400000);
+export const addDays = (iso, n) => {
+  const t = new Date(toUTC(iso) + n * 86400000);
+  const z = (v) => String(v).padStart(2, '0');
+  return `${t.getUTCFullYear()}-${z(t.getUTCMonth() + 1)}-${z(t.getUTCDate())}`;
+};
+export const addYears = (iso, n) => {
+  const y = yearOf(iso) + Math.floor(n);
+  const rest = iso.slice(4);
+  return rest === '-02-29' ? `${y}-02-28` : `${y}${rest}`;
+};
+export const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+/** 'YYYY-MM' n months before/after ym. */
+export const shiftYM = (ym, n) => {
+  const [y, m] = ym.split('-').map(Number);
+  const idx = y * 12 + (m - 1) + n;
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`;
+};
+const sum = (a) => a.reduce((s, x) => s + (Number(x) || 0), 0);
+const mean = (a) => (a.length ? sum(a) / a.length : null);
+const num = (v, d = 0) => (v === '' || v == null || isNaN(Number(v)) ? d : Number(v));
+
+/* ------------------------------ Mason defaults --------------------------- */
+/* Approximate 1991–2020 monthly normals for Mason, TX (inches). They are only a
+   starting point — Settings lets the owner replace them with NOAA's figures. */
+export const MASON_NORMALS = [1.2, 1.5, 2.0, 1.9, 3.3, 3.0, 1.8, 2.3, 3.0, 2.9, 1.6, 1.3];
+
+/* Animal-unit equivalents by class (1 AU = 1,000 lb cow with calf <6 mo). */
+export const AU_EQUIV = {
+  cow: 1.0, 'bred heifer': 0.9, heifer: 0.75, bull: 1.35,
+  steer: 0.6, calf: 0.5, horse: 1.25, goat: 0.15, sheep: 0.2,
+};
+
+/* ------------------------------ 1. rainfall ------------------------------ */
+/**
+ * Rain over the trailing `months` months ending with asOf's month, against
+ * the normal. A month with no gauge readings counts as MISSING, not as zero,
+ * so a forgotten gauge doesn't look like drought (log 0.00 for a dry month).
+ * The current month's normal is prorated by how far into the month asOf is.
+ */
+export function rainWindow(readings, normals, asOf, months = 12) {
+  const end = ymOf(asOf);
+  const byYM = new Map();
+  for (const r of readings) {
+    if (!r.date) continue;
+    const k = ymOf(r.date);
+    byYM.set(k, (byYM.get(k) || 0) + num(r.inches));
+  }
+  const rows = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const ym = shiftYM(end, -i);
+    const [y, m] = ym.split('-').map(Number);
+    let normal = num(normals[m - 1]);
+    if (ym === end) normal *= Math.min(1, monthDay(asOf) / daysInMonth(y, m));
+    const covered = byYM.has(ym);
+    rows.push({ ym, actual: covered ? byYM.get(ym) : null, normal, covered });
+  }
+  const cov = rows.filter((r) => r.covered);
+  const actual = sum(cov.map((r) => r.actual));
+  const normal = sum(cov.map((r) => r.normal));
+  return {
+    rows, actual, normal,
+    fullNormal: sum(rows.map((r) => r.normal)),
+    ratio: normal > 0 ? actual / normal : null,
+    missing: rows.filter((r) => !r.covered).map((r) => r.ym),
+  };
+}
+const monthDay = (iso) => Number(iso.slice(8, 10));
+
+/** Calendar-year monthly totals: [{m, actual|null, normal}] for 12 months. */
+export function rainByMonth(readings, normals, year) {
+  const out = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, actual: null, normal: num(normals[i]) }));
+  for (const r of readings) {
+    if (!r.date || yearOf(r.date) !== year) continue;
+    const o = out[monthOf(r.date) - 1];
+    o.actual = (o.actual || 0) + num(r.inches);
+  }
+  return out;
+}
+
+/* ------------------------- 2. carrying capacity -------------------------- */
+/**
+ * acres ÷ acres/AU, scaled by the rain ratio (capped — by default you don't
+ * stock up past the base rate in a wet year), less any deer AU you choose to
+ * charge against the grass. `head` is floored: 12.5 AU supports 12 cows.
+ */
+export function carryingCapacity({ acres, acresPerAU, rainRatio = 1, maxFactor = 1, deer = 0, deerPerAU = 6 }) {
+  const base = acresPerAU > 0 ? acres / acresPerAU : 0;
+  const factor = Math.max(0, Math.min(rainRatio == null ? 1 : rainRatio, maxFactor));
+  const adjusted = base * factor;
+  const deerAU = deerPerAU > 0 ? deer / deerPerAU : 0;
+  const available = Math.max(0, adjusted - deerAU);
+  return { base, factor, adjusted, deerAU, available, head: Math.floor(available + 1e-9) };
+}
+
+/** Drought ladder: head supported at each rain level — the destock triggers. */
+export function droughtLadder(opts, levels = [1, 0.8, 0.6, 0.4]) {
+  return levels.map((r) => ({ ratio: r, ...carryingCapacity({ ...opts, rainRatio: r }) }));
+}
+
+/** Current stocking vs capacity: 'over' | 'full' | 'room'. */
+export function stockingStatus(currentAU, availableAU) {
+  const diff = availableAU - currentAU;
+  if (diff < -0.05) return { state: 'over', diff, msg: `Over capacity by ${(-diff).toFixed(1)} AU — destock` };
+  if (diff < 1) return { state: 'full', diff, msg: 'At capacity' };
+  return { state: 'room', diff, msg: `Room for ${diff.toFixed(1)} AU` };
+}
+
+/* --------------------------- 3. pasture rotation ------------------------- */
+/** One row per pasture: grazing now?, last period, rest days, AU-days this year. */
+export function rotationSummary(pastures, grazings, asOf) {
+  const year = yearOf(asOf);
+  return pastures.map((p) => {
+    const gs = grazings.filter((g) => g.pasture === p.id && g.dateIn && g.dateIn <= asOf)
+      .sort((a, b) => (a.dateIn < b.dateIn ? -1 : 1));
+    const last = gs[gs.length - 1];
+    const grazingNow = !!last && (!last.dateOut || last.dateOut > asOf);
+    let auDays = 0;
+    for (const g of gs) {
+      const s = g.dateIn > `${year}-01-01` ? g.dateIn : `${year}-01-01`;
+      const e0 = g.dateOut && g.dateOut < asOf ? g.dateOut : asOf;
+      const e = e0 < `${year}-12-31` ? e0 : `${year}-12-31`;
+      if (e > s) auDays += daysBetween(s, e) * num(g.au);
+    }
+    const scored = gs.filter((g) => g.score !== '' && g.score != null);
+    return {
+      pasture: p, last, grazingNow,
+      daysGrazed: last ? daysBetween(last.dateIn, grazingNow ? asOf : last.dateOut) : null,
+      restDays: last && !grazingNow ? daysBetween(last.dateOut, asOf) : null,
+      score: scored.length ? num(scored[scored.length - 1].score) : null,
+      auDays, auDaysPerAcre: num(p.acres) > 0 ? auDays / num(p.acres) : null,
+    };
+  });
+}
+
+/* ------------------------------ 4. herd ---------------------------------- */
+const OUT_TYPES = ['sale', 'death'];
+/** When an animal came onto and left the place. */
+export function animalSpan(animal, events) {
+  const inDate = animal.purchaseDate || animal.birthDate || null;
+  const outs = events.filter((e) => e.animal === animal.id && OUT_TYPES.includes(e.type) && e.date)
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  return { inDate, outDate: outs[0]?.date || null, outType: outs[0]?.type || null };
+}
+export function isOnPlace(animal, events, asOf) {
+  const { inDate, outDate } = animalSpan(animal, events);
+  return (!inDate || inDate <= asOf) && (!outDate || outDate > asOf);
+}
+/** AU for one animal on a date. A nursing (unweaned) calf rides on its dam's 1.0. */
+export function animalAU(animal, events, asOf, table = AU_EQUIV) {
+  if (animal.au !== '' && animal.au != null && !isNaN(Number(animal.au))) return Number(animal.au);
+  if (animal.cls === 'calf') {
+    const weaned = events.some((e) => e.animal === animal.id && e.type === 'wean' && e.date <= asOf);
+    if (!weaned) return 0;
+  }
+  return table[animal.cls] ?? 1;
+}
+/** Head count by class and total AU on a date. */
+export function headCount(animals, events, asOf, table = AU_EQUIV) {
+  const byClass = {}, auByClass = {};
+  let total = 0, au = 0;
+  for (const a of animals) {
+    if (!isOnPlace(a, events, asOf)) continue;
+    const x = animalAU(a, events, asOf, table);
+    byClass[a.cls] = (byClass[a.cls] || 0) + 1;
+    auByClass[a.cls] = (auByClass[a.cls] || 0) + x;
+    total += 1;
+    au += x;
+  }
+  return { byClass, auByClass, total, au };
+}
+/** Average head/AU across the 12 month-ends of a year (for packets and cost/cow). */
+export function yearAverageCount(animals, events, year, table = AU_EQUIV) {
+  const pts = [];
+  for (let m = 1; m <= 12; m++) {
+    const iso = `${year}-${String(m).padStart(2, '0')}-${String(daysInMonth(year, m)).padStart(2, '0')}`;
+    pts.push(headCount(animals, events, iso, table));
+  }
+  const cows = pts.map((p) => (p.byClass.cow || 0) + (p.byClass['bred heifer'] || 0));
+  return { avgHead: mean(pts.map((p) => p.total)), avgAU: mean(pts.map((p) => p.au)), avgCows: mean(cows), monthly: pts };
+}
+
+/** 205-day adjusted weaning weight (BIF): (WW − BW) / age × 205 + BW. */
+export function adj205(weanWt, birthWt, ageDays) {
+  if (!(weanWt > 0) || !(ageDays > 0)) return null;
+  const bw = birthWt > 0 ? birthWt : 70;
+  return ((weanWt - bw) / ageDays) * 205 + bw;
+}
+
+/**
+ * Calf-crop KPIs for the crop year Y (the year the calves are born).
+ * Exposed cows = distinct animals with an 'expose' event whose crop is Y.
+ * The KPI that matters: pounds weaned per exposed cow.
+ */
+export function calfCropKPIs(animals, events, cropYear) {
+  const crop = Number(cropYear);
+  const cropStr = String(crop);
+  const exposed = new Set(events.filter((e) => e.type === 'expose' && String(e.crop) === cropStr).map((e) => e.animal));
+  const pregs = events.filter((e) => e.type === 'preg' && String(e.crop) === cropStr && exposed.has(e.animal));
+  const lastPreg = new Map();
+  for (const e of pregs.sort((a, b) => (a.date < b.date ? -1 : 1))) lastPreg.set(e.animal, e.result);
+  const bred = [...lastPreg.values()].filter((r) => r === 'bred').length;
+  const calves = animals.filter((a) => a.dam && exposed.has(a.dam) && a.birthDate && yearOf(a.birthDate) === crop);
+  const weanings = [];
+  for (const c of calves) {
+    const w = events.filter((e) => e.animal === c.id && e.type === 'wean' && num(e.weight) > 0)
+      .sort((a, b) => (a.date < b.date ? -1 : 1))[0];
+    if (!w) continue;
+    const age = c.birthDate ? daysBetween(c.birthDate, w.date) : null;
+    weanings.push({ calf: c, weight: num(w.weight), adj: adj205(num(w.weight), num(c.birthWeight), age) });
+  }
+  const n = exposed.size;
+  const lbs = sum(weanings.map((w) => w.weight));
+  const adjs = weanings.map((w) => w.adj).filter((x) => x != null);
+  return {
+    crop, exposed: n, pregChecked: lastPreg.size, bred,
+    pregRate: lastPreg.size ? bred / lastPreg.size : null,
+    born: calves.length, calvingPct: n ? calves.length / n : null,
+    weaned: weanings.length, weaningPct: n ? weanings.length / n : null,
+    avgWeanWt: weanings.length ? lbs / weanings.length : null,
+    avgAdj205: adjs.length ? mean(adjs) : null,
+    lbsWeaned: lbs, lbsPerExposed: n ? lbs / n : null,
+  };
+}
+
+/** Sale proceeds: the receipt's net amount if entered, else weight × $/cwt. */
+export const saleAmount = (e) =>
+  e.amount !== '' && e.amount != null && !isNaN(Number(e.amount)) ? Number(e.amount) : (num(e.weight) / 100) * num(e.price);
+
+/* ------------------------------ 5. deer ---------------------------------- */
+/** Deer season label: Aug–Dec belong to that year's season, Jan–Jul to the prior. */
+export const deerSeason = (iso) => {
+  const y = yearOf(iso);
+  const s = monthOf(iso) >= 8 ? y : y - 1;
+  return `${s}-${String((s + 1) % 100).padStart(2, '0')}`;
+};
+
+export function harvestSummary(harvests) {
+  const bucks = harvests.filter((h) => h.sex === 'buck');
+  const does = harvests.filter((h) => h.sex === 'doe');
+  const ages = {};
+  for (const h of harvests) {
+    if (h.age === '' || h.age == null) continue;
+    const k = `${h.sex}|${num(h.age)}`;
+    (ages[k] ||= { sex: h.sex, age: num(h.age), n: 0, w: [], s: [] });
+    ages[k].n++;
+    if (num(h.weight) > 0) ages[k].w.push(num(h.weight));
+    if (num(h.score) > 0) ages[k].s.push(num(h.score));
+  }
+  const buckAges = bucks.map((b) => b.age).filter((a) => a !== '' && a != null).map(Number);
+  const scores = bucks.map((b) => num(b.score)).filter((s) => s > 0);
+  return {
+    total: harvests.length, bucks: bucks.length, does: does.length,
+    doesPerBuck: bucks.length ? does.length / bucks.length : null,
+    avgBuckAge: mean(buckAges), mature: buckAges.filter((a) => a >= 5.5).length,
+    avgScore: mean(scores),
+    byAge: Object.values(ages).sort((a, b) => (a.sex === b.sex ? a.age - b.age : a.sex < b.sex ? -1 : 1))
+      .map((g) => ({ sex: g.sex, age: g.age, n: g.n, avgWeight: mean(g.w), avgScore: mean(g.s) })),
+  };
+}
+
+/**
+ * One spotlight run. Acres seen = transect length × visible width
+ * (miles × 1,760 yd × width yd ÷ 4,840 yd²/acre).
+ */
+export function spotlightRun({ miles, width, bucks = 0, does = 0, fawns = 0, unknown = 0 }) {
+  const deer = num(bucks) + num(does) + num(fawns) + num(unknown);
+  const acresSeen = (num(miles) * 1760 * num(width)) / 4840;
+  return {
+    deer, acresSeen,
+    deerPerMile: num(miles) > 0 ? deer / num(miles) : null,
+    acresPerDeer: deer > 0 ? acresSeen / deer : null,
+  };
+}
+
+/** Pool several runs (TPWD wants ≥3 nights) into a density and herd estimate. */
+export function spotlightEstimate(runs, propertyAcres) {
+  const r = runs.map((x) => ({ ...x, ...spotlightRun(x) }));
+  const deer = sum(r.map((x) => x.deer));
+  const acres = sum(r.map((x) => x.acresSeen));
+  const miles = sum(r.map((x) => num(x.miles)));
+  const b = sum(r.map((x) => num(x.bucks))), d = sum(r.map((x) => num(x.does))), f = sum(r.map((x) => num(x.fawns)));
+  const acresPerDeer = deer > 0 ? acres / deer : null;
+  const population = acresPerDeer ? propertyAcres / acresPerDeer : null;
+  const ident = b + d + f;
+  return {
+    runs: r.length, deer, miles, acresSeen: acres, acresPerDeer,
+    deerPerMile: miles > 0 ? deer / miles : null,
+    population,
+    doesPerBuck: b > 0 ? d / b : null,
+    fawnsPerDoe: d > 0 ? f / d : null,
+    est: population && ident ? { bucks: population * b / ident, does: population * d / ident, fawns: population * f / ident } : null,
+  };
+}
+
+/**
+ * Harvest quota to move the herd toward a target density and sex ratio.
+ * Excess = population − acres/targetAcresPerDeer. Does come off first until
+ * the doe:buck ratio reaches target; the rest splits at the target ratio.
+ */
+export function harvestQuota({ population, bucks, does, acres, targetAcresPerDeer, targetDoesPerBuck = 2 }) {
+  if (!population || !targetAcresPerDeer) return null;
+  const target = acres / targetAcresPerDeer;
+  const excess = Math.max(0, population - target);
+  const surplusDoes = Math.max(0, (does || 0) - (bucks || 0) * targetDoesPerBuck);
+  const doesFirst = Math.min(excess, surplusDoes);
+  const rest = excess - doesFirst;
+  const r = targetDoesPerBuck;
+  return {
+    target, excess,
+    does: Math.round(doesFirst + (rest * r) / (1 + r)),
+    bucks: Math.round(rest / (1 + r)),
+  };
+}
+
+/* ------------------------------ 6. dove ---------------------------------- */
+/** Plan a dove field back from the opener. */
+export function doveSchedule({ plantDate, daysToMaturity = 100, opener }) {
+  if (!plantDate || !opener) return null;
+  const maturity = addDays(plantDate, num(daysToMaturity, 100));
+  const lead = daysBetween(maturity, opener);
+  const mows = [21, 14, 7].map((d) => ({ date: addDays(opener, -d), label: `Mow/shred strip (${d} days out)` }));
+  let status = 'ok', msg = `Grain matures ${lead} days before the opener.`;
+  if (lead < 21) { status = 'late'; msg = `Matures only ${lead} days before the opener — too late for the first mow strip 3 weeks out. Plant earlier or pick a shorter-season hybrid.`; }
+  else if (lead > 60) { status = 'early'; msg = `Matures ${lead} days early — heads may shatter or be eaten out before the opener.`; }
+  return { maturity, lead, mows, status, msg, latestPlant: addDays(opener, -(num(daysToMaturity, 100) + 21)) };
+}
+
+/* ------------------------------ 7. land & gear --------------------------- */
+export const BRUSH_RETREAT_YEARS = { cedar: 10, mesquite: 7, 'prickly pear': 5, other: 7 };
+export function brushRow(t, asOf) {
+  const acres = num(t.acres);
+  const cost = num(t.cost);
+  const yrs = num(t.retreatYears, BRUSH_RETREAT_YEARS[t.species] ?? 7);
+  const due = t.date ? addYears(t.date, yrs) : null;
+  const daysLeft = due ? daysBetween(asOf, due) : null;
+  return { ...t, costPerAcre: acres > 0 ? cost / acres : null, due, daysLeft, overdue: daysLeft != null && daysLeft < 0 };
+}
+
+/** Next due date for a recurring chore (e.g. feeder refill every 14 days). */
+export function dueInfo(lastDate, everyDays, asOf) {
+  if (!lastDate || !(num(everyDays) > 0)) return null;
+  const due = addDays(lastDate, num(everyDays));
+  const daysLeft = daysBetween(asOf, due);
+  return { due, daysLeft, state: daysLeft < 0 ? 'overdue' : daysLeft <= 3 ? 'soon' : 'ok' };
+}
+
+/* ------------------------- 8. wildlife valuation ------------------------- */
+/* Texas Tax Code §23.51(7) / 34 TAC §9.2003: at least 3 of these 7 practices
+   must be carried out each year under a wildlife management plan. */
+export const WILDLIFE_PRACTICES = [
+  { key: 'habitat', label: 'Habitat control' },
+  { key: 'erosion', label: 'Erosion control' },
+  { key: 'predator', label: 'Predator control' },
+  { key: 'water', label: 'Providing supplemental water' },
+  { key: 'food', label: 'Providing supplemental food' },
+  { key: 'shelter', label: 'Providing shelters' },
+  { key: 'census', label: 'Making census counts to determine population' },
+];
+
+/**
+ * Which of the seven practices have evidence in a year. Logged practice
+ * entries count directly; other modules contribute derived evidence
+ * (brush work → habitat control, spotlight runs → census, and so on).
+ */
+export function practiceCoverage(year, src) {
+  const inYear = (d) => d && yearOf(d) === year;
+  const ev = Object.fromEntries(WILDLIFE_PRACTICES.map((p) => [p.key, []]));
+  for (const p of src.practices || []) if (inYear(p.date) && ev[p.practice]) ev[p.practice].push({ date: p.date, text: p.activity || '', source: 'Practice log' });
+  for (const b of src.brush || []) if (inYear(b.date)) ev.habitat.push({ date: b.date, text: `${b.species} ${b.method || 'treatment'}, ${num(b.acres)} ac${b.area ? ' — ' + b.area : ''}`, source: 'Brush management' });
+  for (const s of src.surveys || []) if (inYear(s.date)) ev.census.push({ date: s.date, text: `Spotlight count, ${s.route || 'route'} (${num(s.miles)} mi)`, source: 'Spotlight survey' });
+  for (const m of src.waterWork || []) if (inYear(m.date) && m.wildlife) ev.water.push({ date: m.date, text: m.work || 'Water point work', source: 'Water points' });
+  for (const f of src.feedings || []) if (inYear(f.date)) ev.food.push({ date: f.date, text: `${f.what || 'Feeder refill'}${f.device ? ' — ' + f.device : ''}`, source: 'Feeders' });
+  for (const f of src.doveFields || []) if (inYear(f.plantDate)) ev.food.push({ date: f.plantDate, text: `${f.crop || 'Food plot'} planted, ${num(f.acres)} ac — ${f.name}`, source: 'Food plots' });
+  const byKey = WILDLIFE_PRACTICES.map((p) => ({ ...p, evidence: ev[p.key].sort((a, b) => (a.date < b.date ? -1 : 1)), met: ev[p.key].length > 0 }));
+  const met = byKey.filter((p) => p.met).length;
+  return { year, practices: byKey, met, ok: met >= 3 };
+}
+
+/* ------------------------------ 9. money --------------------------------- */
+export const ENTERPRISES = ['cattle', 'hunting', 'dove', 'overhead'];
+
+/**
+ * Enterprise P&L for a year. Cattle sales come from the herd's sale events,
+ * cattle purchases from animals' purchase price, and lease fees from the
+ * hunting leases — they're never typed into the ledger twice.
+ */
+export function enterprisePL(year, { ledger = [], sales = [], animals = [], leases = [] }) {
+  const E = Object.fromEntries(ENTERPRISES.map((k) => [k, { income: 0, expense: 0, lines: {} }]));
+  const add = (ent, cat, amt) => {
+    const e = E[ent] || E.overhead;
+    if (amt >= 0) e.income += amt; else e.expense += -amt;
+    e.lines[cat] = (e.lines[cat] || 0) + amt;
+  };
+  for (const t of ledger) if (t.date && yearOf(t.date) === year) add(t.enterprise, t.category || 'Other', (t.kind === 'income' ? 1 : -1) * Math.abs(num(t.amount)));
+  for (const s of sales) if (s.date && yearOf(s.date) === year) add('cattle', 'Cattle sales', saleAmount(s));
+  for (const a of animals) if (a.purchaseDate && yearOf(a.purchaseDate) === year && num(a.purchasePrice) > 0) add('cattle', 'Cattle purchases', -num(a.purchasePrice));
+  for (const l of leases) if (l.paidDate && yearOf(l.paidDate) === year && num(l.fee) > 0) add(l.enterprise === 'dove' ? 'dove' : 'hunting', 'Lease fees', num(l.fee));
+  let income = 0, expense = 0;
+  for (const k of ENTERPRISES) { E[k].net = E[k].income - E[k].expense; income += E[k].income; expense += E[k].expense; }
+  return { year, enterprises: E, income, expense, net: income - expense };
+}
+
+/** Cost per cow per year and breakeven $/cwt of calf weaned. */
+export function cattleUnitCosts({ cattleExpense, overhead = 0, overheadShare = 0, avgCows, lbsWeaned }) {
+  const cost = cattleExpense + overhead * overheadShare;
+  return {
+    cost,
+    costPerCow: avgCows > 0 ? cost / avgCows : null,
+    breakevenCwt: lbsWeaned > 0 ? cost / (lbsWeaned / 100) : null,
+  };
+}
+
+/* ------------------------------ 10. scenarios ---------------------------- */
+/* Every scenario is before land costs (taxes, insurance, debt). Hunting lease
+   income is optional in the grazing scenarios and built in to wildlife-only. */
+export function scenarioCowCalf(p) {
+  const cows = num(p.cows);
+  const calves = cows * num(p.calfCrop);
+  const calfRevenue = calves * num(p.weanWt) * num(p.pricePerLb);
+  const culls = Math.round(cows * num(p.cullRate));
+  const cullRevenue = culls * num(p.cullWt) * num(p.cullPricePerLb);
+  const hunting = p.withHunting ? num(p.acres) * num(p.huntPerAcre) : 0;
+  const gross = calfRevenue + cullRevenue + hunting;
+  const costs = cows * num(p.costPerCow);
+  return { key: 'cowcalf', label: 'Cow-calf', head: cows, gross, costs, net: gross - costs,
+    detail: `${cows} cows × ${fmtPct(p.calfCrop)} calf crop × ${num(p.weanWt)} lb × $${num(p.pricePerLb).toFixed(2)}/lb` };
+}
+export function scenarioStockers(p) {
+  const days = num(p.days);
+  const outWt = num(p.inWt) + num(p.adg) * days;
+  const avgAU = ((num(p.inWt) + outWt) / 2) / 1000;
+  const auDaysAvail = num(p.capacityAU) * 365 * num(p.seasonShare);
+  const head = avgAU > 0 && days > 0 ? Math.floor(auDaysAvail / (avgAU * days)) : 0;
+  const sold = head * (1 - num(p.deathLoss));
+  const revenue = sold * (outWt / 100) * num(p.sellCwt);
+  const purchase = head * (num(p.inWt) / 100) * num(p.buyCwt);
+  const hunting = p.withHunting ? num(p.acres) * num(p.huntPerAcre) : 0;
+  const costs = purchase + head * num(p.costPerHead);
+  const gross = revenue + hunting;
+  return { key: 'stockers', label: 'Stockers', head, outWt, gross, costs, net: gross - costs,
+    detail: `${head} hd, ${num(p.inWt)}→${Math.round(outWt)} lb over ${days} d, buy $${num(p.buyCwt)}/cwt, sell $${num(p.sellCwt)}/cwt` };
+}
+export function scenarioGrazingLease(p) {
+  const lease = num(p.acres) * num(p.grazingPerAcre);
+  const hunting = p.withHunting ? num(p.acres) * num(p.huntPerAcre) : 0;
+  const costs = num(p.leaseOwnerCosts);
+  return { key: 'lease', label: 'Lease-only', head: 0, gross: lease + hunting, costs, net: lease + hunting - costs,
+    detail: `${num(p.acres)} ac × $${num(p.grazingPerAcre)}/ac grazing lease` };
+}
+export function scenarioWildlife(p) {
+  const gross = num(p.acres) * num(p.wildlifeHuntPerAcre);
+  const costs = num(p.wildlifeCosts);
+  return { key: 'wildlife', label: 'Wildlife-only', head: 0, gross, costs, net: gross - costs,
+    detail: `${num(p.acres)} ac × $${num(p.wildlifeHuntPerAcre)}/ac hunting, no cattle` };
+}
+const fmtPct = (x) => `${Math.round(num(x) * 100)}%`;
+
+/* ------------------------------ 11. calendar ----------------------------- */
+/** First given weekday (0=Sun…6=Sat) on/after an ISO date. */
+export function nextWeekday(iso, dow) {
+  const d = new Date(toUTC(iso)).getUTCDay();
+  return addDays(iso, (dow - d + 7) % 7);
+}
+/**
+ * Seasonal task template for a Mason County cow-calf / deer / dove place.
+ * Deer dates follow TPWD's usual pattern (general season opens the first
+ * Saturday of November; archery five weeks earlier) — confirm each year in
+ * the Outdoor Annual.
+ */
+export function seasonalTemplate(year, { doveOpener = '09-01', calving = 'spring' } = {}) {
+  const Y = year;
+  const gen = nextWeekday(`${Y}-11-01`, 6);
+  const t = (date, title, category, notes = '') => ({ date, title, category, notes });
+  const out = [
+    t(`${Y}-01-15`, 'Prescribed burn window opens — check Mason County burn ban, line up crew', 'land', 'Winter burns Jan–Mar; need a burn plan and notify neighbors.'),
+    t(`${Y}-02-01`, 'Brush retreatment walk — cedar/mesquite regrowth', 'land'),
+    t(`${Y}-03-15`, 'Burn window closing — finish burns before green-up', 'land'),
+    t(`${Y}-04-01`, 'Wildlife valuation annual report — confirm Mason CAD deadline and file', 'compliance', 'Year-end packet lives under Compliance → Valuation packet.'),
+    t(`${Y}-04-15`, 'Milo planting window opens (dove fields)', 'dove'),
+    t(`${Y}-05-15`, 'Property tax protest deadline (typical) — review appraisal notice', 'compliance'),
+    t(`${Y}-05-31`, 'Last call to plant milo for a Sept opener', 'dove'),
+    t(`${Y}-08-01`, 'Spotlight census — 3 nights, same route', 'wildlife'),
+    t(addDays(`${Y}-${doveOpener}`, -21), 'Dove field: first mow strip; pull deer feeders near dove fields (10-day rule)', 'dove'),
+    t(`${Y}-${doveOpener}`, 'Dove season opener', 'dove'),
+    t(addDays(gen, -35), 'Archery deer season opens (verify)', 'wildlife'),
+    t(gen, 'General deer season opens (verify)', 'wildlife'),
+    t(`${Y}-12-15`, 'Year-end: rain gauge, head count and receipts complete for valuation packet', 'compliance'),
+    t(`${Y}-12-31`, 'Hunting lease renewals & liability insurance certificates', 'compliance'),
+  ];
+  if (calving === 'spring') {
+    out.push(
+      t(`${Y}-02-01`, 'Calving season starts — check heifers twice daily', 'cattle'),
+      t(`${Y}-04-20`, 'Work calves: brand, vaccinate, castrate', 'cattle'),
+      t(`${Y}-05-01`, 'Turn out bull (breeding season)', 'cattle'),
+      t(`${Y}-07-15`, 'Pull bull', 'cattle'),
+      t(`${Y}-09-15`, 'Preg check cows (~60 days after bull out); cull opens', 'cattle'),
+      t(`${Y}-10-01`, 'Wean calves — weigh every calf', 'cattle'),
+    );
+  } else {
+    out.push(
+      t(`${Y}-09-01`, 'Calving season starts', 'cattle'),
+      t(`${Y}-12-01`, 'Turn out bull', 'cattle'),
+      t(`${Y}-04-15`, 'Preg check cows; cull opens', 'cattle'),
+      t(`${Y}-05-15`, 'Wean calves — weigh every calf', 'cattle'),
+    );
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+}

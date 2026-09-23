@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mason County Ranch</title>
+  <meta name="description" content="Offline ranch records for an absentee-owned Mason County, Texas place: stocking, herd, deer, dove, water, valuation packet and enterprise P&L.">
+  <meta name="theme-color" content="#2F3A2B">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Ranch">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar noprint">
+    <button id="menu-btn" class="icon-btn" aria-label="Menu">☰</button>
+    <a href="#/home" class="brand"><img src="icons/icon.svg" alt="" width="28" height="28"><span>Ranch</span></a>
+    <h1 id="page-title">Dashboard</h1>
+    <span id="net" class="pill warn hidden" title="No signal — everything still saves on this device">offline</span>
+  </header>
+  <div class="layout">
+    <nav id="nav" class="noprint" aria-label="Sections"></nav>
+    <div id="scrim" class="noprint"></div>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
