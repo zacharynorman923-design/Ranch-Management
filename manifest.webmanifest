@@ -1,0 +1,14 @@
+{
+  "name": "Mason County Ranch",
+  "short_name": "Ranch",
+  "description": "Offline ranch records: stocking, herd, deer, dove, water, valuation packet and enterprise P&L.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F4F1EA",
+  "theme_color": "#2F3A2B",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
