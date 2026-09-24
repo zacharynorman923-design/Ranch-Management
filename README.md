@@ -70,9 +70,13 @@ it in one step under Settings.
   cedar 10 yr, mesquite 7, pear 5).
 - **Fences & gates.** Segments, gates, water gaps and guards, with a condition
   log, miles of fence and repair spend.
-- **Map.** An offline SVG map with no tiles. Import the property boundary
-  GeoJSON once. Everything with a GPS pin shows by layer, and you tap a pin to
-  open its record.
+- **Map.** An aerial or topo map with the property boundary, pasture outlines
+  and every GPS-pinned record. There are three ways to get the boundary on it:
+  tap the corners on the aerial photo, drive or walk the fence with GPS, or
+  import a KML, KMZ, GPX, GeoJSON or zipped-shapefile file (Google Earth, My
+  Maps, onX, Gaia, county GIS). Acreage is measured as you draw, and pasture
+  outlines can update each pasture's acres. The map library ships with the
+  app, and tiles you've viewed are cached for use without signal.
 
 ### 4. Compliance & tax
 - **Valuation binder.** Switches between 1-d-1 agricultural and 1-d-1 wildlife.

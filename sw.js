@@ -1,7 +1,7 @@
 /* Offline shell. Bump VERSION on every release so phones pick up new code. */
-const VERSION = 'ranch-v7';
+const VERSION = 'ranch-v8';
 const SHELL = [
-  './', './index.html', './css/styles.css', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/apple-touch-icon.png',
+  './', './index.html', './css/styles.css', './manifest.webmanifest', './icons/icon.svg', './vendor/leaflet/leaflet.js', './vendor/leaflet/leaflet.css', './js/geo.js', './icons/icon-192.png', './icons/apple-touch-icon.png',
   './js/app.js', './js/version.js', './js/calc.js', './js/db.js', './js/model.js', './js/schema.js', './js/ui.js', './js/photos.js', './js/relay.js', './js/sample.js',
   './js/pages/grazing.js', './js/pages/wildlife.js', './js/pages/land.js', './js/pages/compliance.js', './js/pages/money.js', './js/pages/ops.js',
 ];
@@ -10,7 +10,23 @@ self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION && k !== TILES).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+});
+
+/* Map tiles: cache-first and kept across app versions, so any part of the map
+   you've looked at with signal still shows at the ranch without it. */
+const TILES = 'ranch-tiles';
+const TILE_HOSTS = ['server.arcgisonline.com', 'basemap.nationalmap.gov', 'tile.openstreetmap.org'];
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  if (e.request.method !== 'GET' || !TILE_HOSTS.includes(url.hostname)) return;
+  e.respondWith(caches.open(TILES).then(async (c) => {
+    const hit = await c.match(e.request);
+    if (hit) return hit;
+    const res = await fetch(e.request);
+    if (res.ok || res.type === 'opaque') c.put(e.request, res.clone());
+    return res;
+  }));
 });
 /* Network first when there is signal (so updates land), cache when there isn't.
    'no-cache' makes the browser re-check with GitHub Pages instead of reusing
