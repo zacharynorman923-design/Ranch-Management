@@ -85,7 +85,7 @@ export async function loadSample() {
     add('devices', { name: 'Tank sensor', type: 'sensor', loc: at(0.002, -0.001), batteryDate: C.addDays(t, -200), batteryDays: 365 }),
   ];
   for (let k = 1; k <= 8; k++) add('devicelog', { device: devs[1].id, date: C.addDays(t, -19 - (k - 1) * 21), action: 'refill', qty: 300 });
-  const dove = add('dovefields', { name: 'Milo field', acres: 12, crop: 'milo', hybrid: 'Early-maturing grain sorghum', plantDate: `${Y}-04-28`, daysToMaturity: 100, seedRate: 5, loc: at(-0.002, -0.004) });
+  const dove = add('dovefields', { name: 'Milo field', acres: 12, crop: 'milo', hybrid: 'Early-maturing grain sorghum', plantMethod: 'drilled', plantDate: `${Y}-04-28`, daysToMaturity: 100, seedRate: 6, loc: at(-0.002, -0.004) });
   if (past(`${Y}-09-01`)) add('dovehunts', { date: `${Y}-09-01`, field: dove.id, hunters: 6, birds: 71 });
   if (past(`${Y}-09-06`)) add('dovehunts', { date: `${Y}-09-06`, field: dove.id, hunters: 4, birds: 38 });
 

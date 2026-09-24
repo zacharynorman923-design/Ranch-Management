@@ -168,6 +168,29 @@ function activityPanel() {
 }
 
 /* --------------------------------- dove ---------------------------------- */
+function doveRecsPanel(opener) {
+  const rows = C.DOVE_CROPS.map((c) => ({ c, b: C.doveCropAdvice(c.key, { opener }), d: C.doveCropAdvice(c.key, { opener, method: 'drilled' }) }));
+  const md = (iso) => dateLabel(iso).replace(/, \d{4}$/, '');
+  return `<section class="panel">
+    <div class="panel-head"><h2>What to plant: Texas A&amp;M AgriLife</h2>${pill(`for the ${dateLabel(opener)} opener`)}</div>
+    <div class="table-wrap"><table class="tbl compact">
+      <thead><tr><th>Crop</th><th>Broadcast<br>lb/ac</th><th>Drilled<br>lb/ac</th><th>Plant</th><th>Days to<br>seed</th><th>Plant by</th></tr></thead>
+      <tbody>${rows.map(({ c, b, d }) => `<tr>
+        <td><b>${esc(c.label.replace(/ \(.*\)$/, ''))}</b></td>
+        <td class="num">${b.rate ? `${b.rate[0]}–${b.rate[1]}` : '—'}</td>
+        <td class="num">${d.rate ? `${d.rate[0]}–${d.rate[1]}` : '—'}</td>
+        <td class="nowrap">${md(b.window[0])} – ${md(b.window[1])}</td>
+        <td class="num">${c.days ? `${c.days[0]}–${c.days[1]}` : c.seedNote ? `<span class="nowrap">${esc(c.seedNote)}</span>` : '—'}</td>
+        <td class="nowrap">${c.key === 'wheat' ? 'previous fall' : b.plantBy ? `<b>${md(b.plantBy)}</b>${c.agrilife === false ? '*' : ''}` : '—'}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <p class="small muted">* Croton isn't in AgriLife's dove table. Its rate comes from native-seed suppliers, and its timing from its biology: it needs a winter to germinate, and it drops seed from August until frost.</p>
+    <details class="lines"><summary>Tips per crop</summary>
+      <ul class="plain small" style="margin-top:8px">${C.DOVE_CROPS.map((c) => `<li>• <b>${esc(c.label)}:</b> ${esc(c.tip)}</li>`).join('')}</ul>
+    </details>
+    <p class="note">“Plant by” leaves the grain mature 3 weeks before the opener, so you can mow strips at 21, 14 and 7 days out. Rates and dates are from Texas A&amp;M AgriLife's <i>Dove Hunting and Normal Agricultural Operations</i> (EWF-104). The sorghum window is from AgriLife San Angelo's West Central Texas guidance, and wheat from AgriLife's Central Texas wheat rates. Planting at these rates and dates is what keeps a manipulated field legal. Check with your Mason County AgriLife agent for the current year, and keep the seed tags and receipts.</p>
+  </section>`;
+}
+
 /* Federal rule 50 CFR 20.21(i) + TPWD. Doves (unlike ducks) may be hunted over
    a crop manipulated where it grew — but never over grain that was added. */
 export const DOVE_CHECKLIST = [
@@ -190,6 +213,7 @@ export function dove() {
   const hunts = db.all('dovehunts');
   const checks = s.doveChecks?.[opener.slice(0, 4)] || {};
   const done = DOVE_CHECKLIST.filter(([k]) => checks[k]).length;
+  const offRec = fields.filter((f) => f.plantDate && C.yearOf(f.plantDate) >= C.yearOf(opener) - 1 && C.doveCropAdvice(f.crop, { opener, method: f.plantMethod || 'broadcast', plantDate: f.crop === 'wheat' ? '' : f.plantDate, seedRate: f.seedRate })?.checks.some((c) => !c.ok)).map((f) => f.name);
   const byDate = {};
   for (const h of hunts) { (byDate[h.date] ||= { hunters: 0, birds: 0 }); byDate[h.date].hunters += Number(h.hunters) || 0; byDate[h.date].birds += Number(h.birds) || 0; }
   const seasonDates = Object.keys(byDate).filter((d) => C.yearOf(d) === C.yearOf(opener)).sort();
@@ -197,25 +221,35 @@ export function dove() {
     <section class="panel">
       <div class="panel-head"><h2>Dove fields for the ${dateLabel(opener)} opener</h2>${pill(`${C.daysBetween(t, opener) >= 0 ? C.daysBetween(t, opener) + ' days out' : 'season open'}`)}</div>
       ${fields.length ? fields.map((f) => {
-        const sch = f.plantDate ? C.doveSchedule({ plantDate: f.plantDate, daysToMaturity: f.daysToMaturity, opener: `${C.yearOf(f.plantDate)}-${s.opener}` }) : null;
+        const fOpener = f.plantDate ? `${C.yearOf(f.plantDate) + (f.crop === 'wheat' && C.monthOf(f.plantDate) >= 9 ? 1 : 0)}-${s.opener}` : opener;
+        const adv = C.doveCropAdvice(f.crop, { opener: fOpener, method: f.plantMethod || 'broadcast', acres: f.acres, plantDate: f.plantDate, seedRate: f.seedRate });
+        const days = f.daysToMaturity || adv?.daysMid || 100;
+        const sch = f.plantDate && adv?.crop.days ? C.doveSchedule({ plantDate: f.plantDate, daysToMaturity: days, opener: fOpener }) : null;
         return `<div class="dove-field">
-          <div class="card-head"><b>${esc(f.name)}</b> <small>${esc(f.crop || '')} · ${esc(f.acres || '?')} ac</small> <button class="btn sm link" data-edit="dovefields:${esc(f.id)}">Edit</button></div>
+          <div class="card-head"><b>${esc(f.name)}</b> <small>${esc(adv?.crop.label || f.crop || '')} · ${esc(f.acres || '?')} ac</small> <button class="btn sm link" data-edit="dovefields:${esc(f.id)}">Edit</button></div>
+          ${adv ? `<div class="advice">
+            <div><b>${adv.crop.agrilife === false ? 'Recommended' : 'Texas A&amp;M AgriLife'}:</b> ${adv.rate ? `${adv.rate[0]}–${adv.rate[1]} lb/ac ${adv.method}${adv.seedLbs ? ` → <b>${adv.seedLbs[0]}–${adv.seedLbs[1]} lb of seed</b> for ${esc(f.acres)} ac` : ''}. ` : ''}Plant ${dateLabel(adv.window[0]).replace(/, \d{4}$/, '')} – ${dateLabel(adv.window[1]).replace(/, \d{4}$/, '')}${adv.plantBy ? `; for the ${dateLabel(fOpener).replace(/, \d{4}$/, '')} opener plant by <b>${dateLabel(adv.plantBy)}</b>` : ''}.</div>
+            ${adv.checks.map((c) => `<div class="${c.ok ? 'ok-t' : 'warn-t'}">${c.ok ? '✓' : '⚠'} ${esc(c.text)}</div>`).join('')}
+            ${f.seedRate === '' || f.seedRate == null ? (adv.rate ? '<div class="muted small">Add your seeding rate (Edit) to check it against the recommendation.</div>' : '') : ''}
+          </div>` : ''}
           ${sch ? `<ul class="timeline">
             <li><span>${dateLabel(f.plantDate)}</span> Planted</li>
-            <li><span>${dateLabel(sch.maturity)}</span> Grain mature (${f.daysToMaturity || 100} days)</li>
+            <li><span>${dateLabel(sch.maturity)}</span> Grain mature (${days} days${f.daysToMaturity ? '' : ', typical'})</li>
             ${sch.mows.map((m) => `<li class="${m.date < t ? 'past' : ''}"><span>${dateLabel(m.date)}</span> ${esc(m.label)}</li>`).join('')}
             <li><span>${dateLabel(`${C.yearOf(f.plantDate)}-${s.opener}`)}</span> <b>Opener</b></li>
           </ul>
           <p class="note ${sch.status === 'ok' ? '' : 'warn'}">${esc(sch.msg)} Latest planting date for this hybrid: ${dateLabel(sch.latestPlant)}.</p>`
+          : adv && !adv.crop.days ? `<p class="note">${esc(adv.crop.tip)}</p>`
           : `<p class="note">No planting date yet. For a ${dateLabel(opener)} opener with a 100-day milo, plant by ${dateLabel(C.addDays(opener, -121))}.</p>`}
         </div>`;
       }).join('') : `<p class="empty">Add a dove field. For a ${dateLabel(opener)} opener with a 100-day milo, plant by ${dateLabel(C.addDays(opener, -121))}.</p>`}
     </section>
 
+    ${doveRecsPanel(t > opener ? `${C.yearOf(opener) + 1}-${s.opener}` : opener)}
     <section class="panel">
       <div class="panel-head"><h2>Legal manipulation checklist · ${opener.slice(0, 4)}</h2>${pill(`${done}/${DOVE_CHECKLIST.length}`, done === DOVE_CHECKLIST.length ? 'good' : 'warn')}</div>
       <p class="note">Baiting is strict liability. You can be cited even if you didn't know the grain was there, and the landowner who placed it is liable too. Tick each item before every hunt.</p>
-      <ul class="checklist">${DOVE_CHECKLIST.map(([k, txt]) => `<li><label><input type="checkbox" data-dcheck="${k}" data-year="${opener.slice(0, 4)}" ${checks[k] ? 'checked' : ''}> ${esc(txt)}</label></li>`).join('')}</ul>
+      <ul class="checklist">${DOVE_CHECKLIST.map(([k, txt]) => `<li><label><input type="checkbox" data-dcheck="${k}" data-year="${opener.slice(0, 4)}" ${checks[k] ? 'checked' : ''}> ${esc(txt)}</label>${k === 'normal' && offRec.length ? `<div class="warn-t small">⚠ Outside the AgriLife recommendation: ${offRec.map(esc).join(', ')}</div>` : ''}</li>`).join('')}</ul>
       <p class="note">Source: 50 CFR 20.21(i) (federal baiting rule) and the TPWD Outdoor Annual. When in doubt, call your game warden <i>before</i> the hunt.</p>
     </section>
 
