@@ -134,7 +134,9 @@ function bentonitePanel() {
 /* --------------------------------- brush --------------------------------- */
 export function brush() {
   const t = C.today();
-  const rows = db.all('brush').map((b) => C.brushRow(b, t));
+  const planned = db.all('brush').filter((b) => b.status === 'planned').sort((a, b) => (a.date < b.date ? -1 : 1));
+  const rows = db.all('brush').filter((b) => b.status !== 'planned').map((b) => C.brushRow(b, t));
+  const mapped = db.all('brush').filter((b) => ringsOf(b.shape).length);
   const years = {};
   for (const r of rows) {
     const y = C.yearOf(r.date);
@@ -161,12 +163,138 @@ export function brush() {
         ${summary.map((r) => `<tr><td>${r.y}</td><td>${esc(r.species)}</td><td class="num">${n1(r.acres)}</td><td class="num">${usd(r.cost)}</td><td class="num">${r.acres ? usd(r.cost / r.acres) : '—'}</td><td class="num">${r.share ? usd(r.share) : '—'}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
       ${due.length ? `<h3>Retreatment schedule</h3><ul class="plain">${due.map((r) => `<li>${pill(daysLabel(r.daysLeft), r.overdue ? 'bad' : 'warn')} ${esc(r.species)} — ${esc(r.area || 'unnamed area')}, ${n1(r.acres)} ac treated ${dateLabel(r.date)} (${esc(r.method || '')})</li>`).join('')}</ul>` : ''}
-      <p class="note">Brush work counts as “habitat control” under wildlife valuation. Drop a GPS pin on each treatment to see it on the <a href="#/map">ranch map</a>.</p>
+      ${planned.length ? `<h3>Planned</h3><ul class="plain">${planned.map((r) => `<li data-edit="brush:${esc(r.id)}">${pill(dateLabel(r.date), 'warn')} ${esc(r.species)} (${esc(r.method || '')}) in ${esc(r.area || 'unnamed area')}, ${n1(r.acres)} ac</li>`).join('')}</ul>` : ''}
+      <p class="note">Brush work counts as “habitat control” under wildlife valuation. <b>${mapped.length} of ${db.all('brush').length}</b> treatments are outlined on the <a href="#/map?outline=newbrush">ranch map</a>: cleared areas show solid and planned ones dashed. Outline a new area there, or tap <i>outline</i> next to a treatment below.</p>
     </section>
+    ${brushPlanner()}
     ${listPanel('brush', { title: 'Treatments', extraCols: [
+      { label: 'Map', html: (r) => (ringsOf(r.shape).length ? `<a href="#/map?outline=${esc(r.id)}" onclick="event.stopPropagation()">▰ ${n1(ringAcres(ringsOf(r.shape)[0]))} ac</a>` : `<a href="#/map?outline=${esc(r.id)}" onclick="event.stopPropagation()">outline</a>`) },
       { label: '$/ac', html: (r) => { const x = C.brushRow(r, t); return x.costPerAcre == null ? '' : usd(x.costPerAcre); } },
       { label: 'Retreat', html: (r) => { const x = C.brushRow(r, t); return x.due ? `<span class="${x.overdue ? 'bad-t' : ''}">${x.due.slice(0, 7)}</span>` : ''; } },
     ] })}`;
+}
+
+/* ---------------------- cedar & prickly pear planner ---------------------- */
+const PEAR_SIZES = { small: ['Small clumps (under 2 ft)', 20], medium: ['Medium (2–4 ft)', 8], large: ['Large (over 4 ft / 6 ft wide)', 3] };
+const PLAN_DEFAULTS = { target: 'cedar', method: 'cutstump', plants: '', density: '', acres: '', height: 4, canopy: 4, pearSize: 'medium', perGal: '', pct: '', tank: 4, price: '', carrier: 20, ptPerAcre: 4 };
+const planState = () => ({ ...PLAN_DEFAULTS, ...(db.settings().brushPlan || {}) });
+function planResult(P) {
+  const m = C.brushPlan(P.target, P.method) || C.BRUSH_PLANS[P.target][0];
+  const plants = Number(P.plants) > 0 ? Number(P.plants) : Number(P.density) * Number(P.acres) || 0;
+  let r = null;
+  if (m.kind === 'mix') {
+    const perGal = Number(P.perGal) > 0 ? Number(P.perGal) : (m.key === 'pad' ? PEAR_SIZES[P.pearSize]?.[1] : m.perGal);
+    const pct = Number(P.pct) > 0 ? Number(P.pct) : m.pct;
+    r = C.herbicideMix({ plants, perGal, pct });
+    if (r) Object.assign(r, { perGal, pct, cost: Number(P.price) > 0 ? r.herbGal * Number(P.price) : null });
+  } else if (m.kind === 'soil') {
+    r = C.velparSoilSpot({ plants, height: P.height, canopy: P.canopy });
+    if (r) r.cost = Number(P.price) > 0 ? r.totalGal * Number(P.price) : null;
+  } else if (m.kind === 'broadcast') {
+    r = C.broadcastNeed({ acres: P.acres, ptPerAcre: P.ptPerAcre, carrier: P.carrier });
+    if (r) r.cost = Number(P.price) > 0 ? r.productGal * Number(P.price) : null;
+  }
+  return { m, plants, r };
+}
+const floz = (x) => (x >= 128 ? `${(x / 128).toFixed(2)} gal` : x >= 32 ? `${(x / 32).toFixed(2)} qt (${n0(x)} fl oz)` : `${x.toFixed(1)} fl oz`);
+function brushPlanner() {
+  const P = planState();
+  const { m, plants, r } = planResult(P);
+  const methods = C.BRUSH_PLANS[P.target];
+  const inp = (k, label, extra = '', help = '') => `<label class="field">${label}<input type="number" inputmode="decimal" step="any" data-set="brushPlan.${k}" value="${esc(P[k] ?? '')}" ${extra}>${help ? `<small class="help">${help}</small>` : ''}</label>`;
+  const sel = (k, label, opts) => `<label class="field">${label}<select data-set="brushPlan.${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(P[k]) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  const alternatives = methods.filter((x) => x.kind === 'none' && x.key !== m.key);
+  let out = '';
+  if (m.kind === 'mix' && r) {
+    out = `<div class="stats">
+      ${stat('Spray mix', `${r.mixGal.toFixed(1)} gal`, `${n0(plants)} plants at ~${r.perGal}/gal`, 'accent')}
+      ${stat(m.product.split(' (')[0], floz(r.herbFlOz), `${r.pct}% of the mix`)}
+      ${stat('Surfactant', floz(r.surfFlOz), '0.25% non-ionic (80–90% AI)')}
+      ${r.cost != null ? stat('Herbicide cost', usd(r.cost)) : ''}
+    </div>
+    <p class="note">Per <b>${esc(P.tank)}-gal</b> tank: <b>${r.perTank(P.tank).herbFlOz.toFixed(1)} fl oz</b> herbicide + <b>${r.perTank(P.tank).surfFlOz.toFixed(1)} fl oz</b> surfactant, then top up with water. ${Math.ceil(r.mixGal / Number(P.tank || 1))} tank fills.</p>`;
+  } else if (m.kind === 'soil' && r) {
+    out = `<div class="stats">
+      ${stat('Per tree', `${r.mlPerPlant} ml`, `${r.pulls} pull${r.pulls > 1 ? 's' : ''} of a 2-ml gun`, 'accent')}
+      ${stat('Velpar L total', r.totalFlOz >= 128 ? `${r.totalGal.toFixed(2)} gal` : `${r.totalFlOz.toFixed(1)} fl oz`, `${n0(r.totalMl)} ml for ${n0(plants)} trees`)}
+      ${r.cost != null ? stat('Herbicide cost', usd(r.cost)) : ''}
+    </div>`;
+  } else if (m.kind === 'broadcast' && r) {
+    out = `<div class="stats">
+      ${stat(m.product, `${r.productGal.toFixed(1)} gal`, `${n1(r.productPt)} pt at ${P.ptPerAcre} pt/ac`, 'accent')}
+      ${stat('Spray volume', `${n0(r.carrierGal)} gal`, `${P.carrier} gal/ac`)}
+      ${r.cost != null ? stat('Herbicide cost', usd(r.cost)) : ''}
+    </div>`;
+  } else if (m.kind === 'none') {
+    out = `<p class="big">No chemical needed.</p>`;
+  } else out = '<p class="empty">Enter how many plants (or plants per acre and acres) to calculate.</p>';
+  return `
+  <section class="panel" id="brush-plan">
+    <div class="panel-head"><h2>Plan cedar &amp; prickly pear work</h2>${pill('Texas A&M Brush Busters')}</div>
+    <div class="seg">${[['cedar', 'Cedar'], ['pear', 'Prickly pear']].map(([k, l]) => `<button class="${P.target === k ? 'on' : ''}" data-plan-target="${k}">${l}</button>`).join('')}</div>
+    <div class="form-grid">
+      ${sel('method', 'Method', methods.map((x) => [x.key, `${x.label}${x.kind === 'none' ? ' (no chemical)' : ''}`]))}
+      ${m.kind === 'broadcast' ? inp('acres', 'Acres to spray') + inp('ptPerAcre', 'Rate (pints/acre)') + inp('carrier', 'Spray volume (gal/acre)', '', '20–25 by ground, 4+ by air.')
+        : m.kind === 'none' ? '' : `${inp('plants', m.key === 'cutstump' ? 'Stumps to treat' : 'Plants to treat')}
+          ${inp('density', '…or plants per acre', '', 'Count one typical 1/10 acre (66 × 66 ft) and multiply by 10.')}${inp('acres', 'Acres')}`}
+      ${m.kind === 'soil' ? inp('height', 'Average height (ft)') + inp('canopy', 'Average canopy width (ft)') : ''}
+      ${m.key === 'pad' ? sel('pearSize', 'Typical plant size', Object.entries(PEAR_SIZES).map(([k, v]) => [k, v[0]])) : ''}
+      ${m.kind === 'mix' ? inp('perGal', 'Plants per gallon of mix', `placeholder="${m.key === 'pad' ? PEAR_SIZES[P.pearSize]?.[1] : m.perGal} (estimate)"`, 'Spray one full tank, count the plants it covered, and put that here.')
+        + inp('pct', 'Herbicide % in the mix', `placeholder="${m.pct}"`, `Brush Busters: ${m.pctRange}.`) + inp('tank', 'Sprayer tank (gal)') : ''}
+      ${m.kind !== 'none' ? inp('price', `${m.kind === 'broadcast' ? m.product : m.product.split(' (')[0]} price ($/gal)`) : ''}
+    </div>
+    ${out}
+    <h3>How to do it</h3>
+    <ol class="steps">
+      ${m.kind === 'mix' ? `<li>Mix: fill the tank half full of water, add <b>${esc(m.product)}</b> at ${esc(m.pctRange)}${m.altProducts ? ` (or ${esc(m.altProducts)})` : ''}, then 0.25% surfactant. Add spray dye so you can see what's done, and top up.</li>` : ''}
+      ${m.kind === 'soil' ? '<li>Set an exact-delivery handgun or syringe to 2 ml and attach it to the Velpar L jug. It is used undiluted.</li>' : ''}
+      <li>${esc(m.note)}</li>
+      <li><b>When:</b> ${esc(m.when)}</li>
+      <li>Outline the area on the <a href="#/map?outline=newbrush">map</a> and log the job below, so it counts as habitat control in the valuation packet and shows up for retreatment in ${P.target === 'cedar' ? '~10' : '~5'} years.</li>
+    </ol>
+    <div class="head-actions">
+      <button class="btn" data-plan-log="planned">Save as planned</button>
+      <button class="btn primary" data-plan-log="done">Log as done</button>
+    </div>
+    <details class="lines" ${m.kind === 'none' ? 'open' : ''}><summary>Non-chemical alternatives for ${P.target === 'cedar' ? 'cedar' : 'prickly pear'}</summary>
+      <ul class="plain small" style="margin-top:8px">${alternatives.map((x) => `<li>• <b>${esc(x.label)}.</b> ${esc(x.note)} <i>${esc(x.when)}</i></li>`).join('')}
+        ${P.target === 'cedar' ? '<li>• <b>Goats.</b> They browse cedar seedlings and resprouts and help keep a cleared area clean, but they won’t clear an established stand.</li><li>• <b>Hire it out.</b> A skid steer with tree shears or a mulcher clears 1–3 ac/day in moderate cedar. NRCS EQIP practice 314 (Brush Management) can cost-share it.</li>'
+          : '<li>• <b>Pear burner (propane).</b> Singeing off the spines turns pear into emergency cattle feed in a drought. It uses the pear rather than removing it.</li><li>• <b>Leave some.</b> Scattered pear clumps are food and cover for deer, quail and javelina. Clear the dense stands and keep 5–10% cover.</li>'}
+      </ul>
+    </details>
+    <details class="lines"><summary>Safety &amp; label notes</summary>
+      <ul class="plain small" style="margin-top:8px">
+        <li>• Always read and follow the label. It is the law, and it overrides these notes.</li>
+        <li>• <b>Picloram products</b> (Tordon 22K, Surmount and similar) are <b>Restricted Use Pesticides</b>. Buying and applying them needs a Texas Department of Agriculture private applicator license, or hire a licensed applicator. Check each product's label, including Velpar L.</li>
+        <li>• Picloram and hexazinone move through the soil. Keep them away from the root zones of live oaks and other trees you want to keep (roots reach well past the drip line), and away from wells, tanks and creeks.</li>
+        <li>• Don't spray in wind or when drift could reach neighbors' crops or gardens. Wear gloves and eye protection, and follow the label's grazing and haying restrictions.</li>
+        <li>• Mature cedar–oak woodland can be habitat for the endangered golden-cheeked warbler. Talk to TPWD or USFWS before clearing big, old stands.</li>
+      </ul>
+    </details>
+  </section>`;
+}
+export function bindBrush(el) {
+  el.querySelectorAll('[data-plan-target]').forEach((b) => b.addEventListener('click', () => {
+    const t = b.dataset.planTarget;
+    db.saveSettings({ brushPlan: { ...planState(), target: t, method: C.BRUSH_PLANS[t][t === 'cedar' ? 1 : 0].key, perGal: '', pct: '', price: '' } });
+  }));
+  el.querySelectorAll('[data-plan-log]').forEach((b) => b.addEventListener('click', () => {
+    const P = planState();
+    const { m, plants, r } = planResult(P);
+    const chem = m.kind === 'mix' && r ? `${r.mixGal.toFixed(1)} gal of ${r.pct}% ${m.product} + 0.25% surfactant (${floz(r.herbFlOz)} herbicide) on ${n0(plants)} plants`
+      : m.kind === 'soil' && r ? `Velpar L soil spot, ${r.mlPerPlant} ml/tree × ${n0(plants)} trees (${r.totalFlOz.toFixed(1)} fl oz)`
+      : m.kind === 'broadcast' && r ? `${m.product} ${P.ptPerAcre} pt/ac broadcast, ${r.productGal.toFixed(1)} gal product in ${n0(r.carrierGal)} gal spray`
+      : 'No chemical';
+    openForm('brush', null, {
+      status: b.dataset.planLog,
+      species: P.target === 'pear' ? 'prickly pear' : 'cedar',
+      method: m.method,
+      acres: Number(P.acres) || '',
+      cost: r?.cost != null ? Math.round(r.cost) : '',
+      retreatYears: P.target === 'pear' ? 5 : 10,
+      notes: `${m.label}. ${chem}.`,
+    });
+  }));
 }
 
 /* --------------------------------- fences -------------------------------- */
@@ -214,10 +342,23 @@ const LAYERS = [
 const M = { hidden: new Set(['photos']), view: null, mode: null, target: 'boundary', pts: [], watch: null, wake: null, acc: null, map: null };
 
 const shapeRings = (p) => ringsOf(p.shape).filter((r) => r.length >= 3);
-const targetName = (t) => (t === 'boundary' ? 'property boundary' : `${db.get('pastures', t)?.name || 'pasture'} outline`);
+/* Outline targets: the boundary, a pasture, a brush treatment, or a new brush area. */
+const targetCol = (t) => (t === 'boundary' || t === 'newbrush' ? t : db.get('pastures', t) ? 'pastures' : db.get('brush', t) ? 'brush' : 'boundary');
+const brushName = (b) => `${b.species || 'brush'} ${b.status === 'planned' ? 'planned' : 'cleared'}${b.area ? `, ${b.area}` : ''} (${b.date || '?'})`;
+const targetName = (t) => {
+  const c = targetCol(t);
+  if (c === 'boundary') return 'property boundary';
+  if (c === 'newbrush') return 'cleared (or planned) brush area';
+  if (c === 'brush') return `${brushName(db.get('brush', t))} area`;
+  return `${db.get('pastures', t)?.name || 'pasture'} outline`;
+};
+const BRUSH_COLORS = { cedar: '#15803D', 'prickly pear': '#0891B2', mesquite: '#CA8A04', other: '#6B7280' };
+let lastOutlineParam = null;
 const lineMiles = (pts) => pts.slice(1).reduce((s, p, i) => s + distance(pts[i], p), 0) / 1609.344;
 
-export function map() {
+export function map(params) {
+  const op = params?.get?.('outline') || null;
+  if (op !== lastOutlineParam) { if (op && (op === 'newbrush' || db.get('brush', op) || db.get('pastures', op))) { M.target = op; M.view = null; } lastOutlineParam = op; }
   const s = S();
   const rings = boundaryRings();
   const acres = rings.reduce((t, r) => t + ringAcres(r), 0);
@@ -236,12 +377,14 @@ export function map() {
         <label class="inline">Outline <select data-map-target>
           <option value="boundary" ${M.target === 'boundary' ? 'selected' : ''}>Property boundary</option>
           ${pastures.map((p) => `<option value="${esc(p.id)}" ${M.target === p.id ? 'selected' : ''}>Pasture: ${esc(p.name)}</option>`).join('')}
+          <option value="newbrush" ${M.target === 'newbrush' ? 'selected' : ''}>＋ New cleared brush area</option>
+          ${db.all('brush').sort((a, b) => (a.date < b.date ? 1 : -1)).map((b) => `<option value="${esc(b.id)}" ${M.target === b.id ? 'selected' : ''}>Brush: ${esc(brushName(b))}${ringsOf(b.shape).length ? ' ▰' : ''}</option>`).join('')}
         </select></label>
         <button class="btn primary" data-map-pin>📌 Drop pin</button>
         <button class="btn" data-map-draw>✏️ Tap corners</button>
         <button class="btn" data-map-walk>🚶 Drive / walk the fence</button>
         <label class="btn">📂 Import file<input type="file" data-map-file hidden></label>
-        ${(M.target === 'boundary' ? rings.length : shapeRings(db.get('pastures', M.target) || {}).length) ? '<button class="btn danger" data-map-clear>Clear</button>' : ''}
+        ${(targetCol(M.target) === 'boundary' ? rings.length : targetCol(M.target) === 'newbrush' ? 0 : shapeRings(db.get(targetCol(M.target), M.target) || {}).length) ? '<button class="btn danger" data-map-clear>Clear</button>' : ''}
       </div>`}
       <div id="ranch-map" class="leaflet-host"><p class="empty" style="padding:16px">Loading map…</p></div>
       <div class="layer-toggles">${LAYERS.map((L) => `<label><input type="checkbox" data-layer="${L.col}" ${M.hidden.has(L.col) ? '' : 'checked'}><span class="dot" style="background:${L.color}"></span>${L.label}</label>`).join('')}</div>
@@ -269,8 +412,9 @@ export async function bindMap(el, rerender) {
   el.querySelector('[data-map-useacres]')?.addEventListener('click', (e) => db.saveSettings({ acres: Number(e.target.dataset.mapUseacres) }));
   el.querySelector('[data-map-clear]')?.addEventListener('click', async () => {
     if (!confirm(`Remove the ${targetName(M.target)}?`)) return;
-    if (M.target === 'boundary') await db.saveSettings({ boundary: null });
-    else await db.put('pastures', { ...db.get('pastures', M.target), shape: null });
+    const col = targetCol(M.target);
+    if (col === 'boundary') await db.saveSettings({ boundary: null });
+    else await db.put(col, { ...db.get(col, M.target), shape: null });
   });
   el.querySelector('[data-map-file]')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -278,7 +422,7 @@ export async function bindMap(el, rerender) {
     try {
       const rings = await parseMapFile(file.name, new Uint8Array(await file.arrayBuffer()));
       M.view = null; // fit to the new shape
-      await saveShape(M.target === 'boundary' ? rings : [rings.sort((a, b) => ringAcres(b) - ringAcres(a))[0]], `Imported ${file.name}`);
+      await saveShape(targetCol(M.target) === 'boundary' ? rings : [rings.sort((a, b) => ringAcres(b) - ringAcres(a))[0]], `Imported ${file.name}`);
     } catch (err) { toast(`Couldn't use that file: ${err.message}`); }
     e.target.value = '';
   });
@@ -316,10 +460,25 @@ export async function bindMap(el, rerender) {
       bounds.push(...ll);
     }
   }
+  if (!M.hidden.has('brush')) {
+    for (const b of db.all('brush')) {
+      for (const ring of shapeRings(b)) {
+        const ll = ring.map(([x, y]) => [y, x]);
+        const color = BRUSH_COLORS[b.species] || BRUSH_COLORS.other;
+        const planned = b.status === 'planned';
+        L.polygon(ll, { color, weight: 2, dashArray: planned ? '6 6' : null, fillColor: color, fillOpacity: planned ? 0.08 : 0.3 })
+          .bindTooltip(`${esc(b.species || 'Brush')} ${planned ? 'planned' : 'cleared'} ${esc((b.date || '').slice(0, 7))} · ${n1(ringAcres(ring))} ac${b.method ? ` · ${esc(b.method)}` : ''}`)
+          .on('click', () => { if (!M.mode) openForm('brush', db.get('brush', b.id)); })
+          .addTo(map);
+        bounds.push(...ll);
+      }
+    }
+  }
   for (const Lr of LAYERS) {
     if (M.hidden.has(Lr.col)) continue;
     for (const r of db.all(Lr.col)) {
       if (!r.loc?.lat || !r.loc?.lon) continue;
+      if (Lr.col === 'brush' && ringsOf(r.shape).length) continue; // drawn as an area
       L.circleMarker([r.loc.lat, r.loc.lon], { radius: 8, color: '#fff', weight: 2, fillColor: Lr.color, fillOpacity: 1 })
         .bindTooltip(`${esc(Lr.label)}: ${esc(Lr.name(r))}`)
         .on('click', () => { if (!M.mode) openForm(Lr.col, db.get(Lr.col, r.id)); })
@@ -384,6 +543,18 @@ async function saveShape(rings, verb) {
   if (M.target === 'boundary') {
     await db.saveSettings({ boundary: toGeoJSON(rings, { name: 'Property boundary' }) });
     toast(`${verb}: property boundary, ${n1(acres)} ac`);
+  } else if (targetCol(M.target) === 'newbrush') {
+    const all = rings.flat();
+    const loc = { lat: +(all.reduce((t, p) => t + p[1], 0) / all.length).toFixed(6), lon: +(all.reduce((t, p) => t + p[0], 0) / all.length).toFixed(6) };
+    const plan = db.settings().brushPlan;
+    const saved = await openForm('brush', null, { shape: toGeoJSON(rings, { name: 'Brush treatment' }), acres: Math.round(acres * 10) / 10, loc, status: 'done', species: plan?.target === 'pear' ? 'prickly pear' : 'cedar' });
+    if (saved) { M.target = saved.id; toast(`${verb}: ${saved.species} area, ${n1(acres)} ac`); }
+  } else if (targetCol(M.target) === 'brush') {
+    const b = db.get('brush', M.target);
+    const patch = { shape: toGeoJSON(rings, { name: 'Brush treatment' }) };
+    if (!(Number(b.acres) > 0) || (Math.abs(acres - Number(b.acres)) / Number(b.acres) > 0.05 && confirm(`The outline measures ${n1(acres)} ac. Update the treatment's acres (now ${b.acres})?`))) patch.acres = Math.round(acres * 10) / 10;
+    await db.put('brush', { ...b, ...patch });
+    toast(`${verb}: ${brushName(b)}, ${n1(acres)} ac`);
   } else {
     const p = db.get('pastures', M.target);
     const patch = { shape: toGeoJSON(rings, { name: p.name }) };

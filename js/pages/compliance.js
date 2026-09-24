@@ -92,7 +92,7 @@ export function packet(params) {
   const est = runs.length ? C.spotlightEstimate(runs, s.acres) : null;
   const hv = db.all('harvests').filter((h) => C.deerSeason(h.date) === `${Y}-${String((Y + 1) % 100).padStart(2, '0')}`);
   const hs = C.harvestSummary(hv);
-  const brush = db.all('brush').filter((b) => inY(b.date));
+  const brush = db.all('brush').filter((b) => b.status !== 'planned' && inY(b.date));
   const ww = db.all('waterwork').filter((w) => inY(w.date));
   const fl = db.all('fencelog').filter((f) => inY(f.date) && (f.work || f.cost));
   const nrcs = db.all('nrcs').filter((m) => inY(m.done) || inY(m.paidDate));

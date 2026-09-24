@@ -59,11 +59,13 @@ export function openForm(col, rec = null, preset = {}) {
   const isNew = !rec;
   const state = { ...(rec || {}) };
   if (isNew) {
+    // Presets first, so defaults that depend on other fields (e.g. retreat
+    // years by species) see them. Defaults fill only what the preset left out.
+    Object.assign(state, preset);
     for (const f of def.fields) {
-      if (f.def === undefined) continue;
+      if (f.def === undefined || state[f.k] !== undefined) continue;
       state[f.k] = typeof f.def === 'function' ? f.def(state) : f.def;
     }
-    Object.assign(state, preset);
   }
   state.photos = [...(state.photos || [])];
 

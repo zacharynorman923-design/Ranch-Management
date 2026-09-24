@@ -683,3 +683,71 @@ export function doveCropAdvice(key, { opener, method = 'broadcast', acres, plant
     checks,
   };
 }
+
+/* ------------------------ 14. cedar & prickly pear ------------------------ */
+/* Texas A&M AgriLife "Brush Busters" methods. Mix percentages are by volume
+   in water, plus 0.25% non-ionic surfactant. Spray volume per plant is our
+   field estimate (Brush Busters says "wet it, but not to runoff"), so every
+   number is editable in the app. Always read and follow the product label. */
+export const BRUSH_PLANS = {
+  cedar: [
+    { key: 'cut', label: 'Cut below the lowest green branch (Ashe / blueberry cedar)', kind: 'none', method: 'hand',
+      when: 'Any time of year. Pile and burn the slash in winter when there is no burn ban.',
+      note: 'Ashe (blueberry) cedar does not resprout from the stump, so no chemical is needed if every green branch is removed.' },
+    { key: 'cutstump', label: 'Cut + stump spray (redberry cedar)', kind: 'mix', product: 'Tordon 22K (picloram)', pct: 3, pctRange: '2–4%', perGal: 40, method: 'ipt',
+      when: 'Any time of year. Spray each stump right after it is cut.',
+      note: 'Redberry cedar resprouts from the crown. Spray the whole stump surface and exposed roots to runoff with 2–4% Tordon 22K + ¼% surfactant.' },
+    { key: 'leaf', label: 'Leaf spray (cedar under 3 ft)', kind: 'mix', product: 'Tordon 22K (picloram)', pct: 1, pctRange: '1%', perGal: 25, method: 'ipt',
+      when: 'Spring and early summer, while the plants are actively growing.',
+      note: 'Wet all the foliage, but not to runoff. Best on blueberry or redberry cedar under 3 ft (76–100% rootkill in AgriLife trials).' },
+    { key: 'soil', label: 'Soil spot (Velpar L, undiluted)', kind: 'soil', product: 'Velpar L (hexazinone)', method: 'ipt',
+      when: 'Late winter to mid-spring, ideally just before a rain.',
+      note: 'Use an exact-delivery gun set to 2 ml. Apply 2 ml for every 3 ft of height or canopy width, whichever is greater, on the soil halfway between the trunk and the drip line. Keep it away from the roots of oaks and other trees you want to keep.' },
+    { key: 'fire', label: 'Prescribed fire (small cedar)', kind: 'none', method: 'fire',
+      when: 'Winter burns (Jan–Mar) with a burn plan, a crew and no burn ban.',
+      note: 'Kills cedar under about 4–6 ft. It needs enough grass to carry the fire, which usually means resting the pasture from grazing for a growing season. Repeat every 5–10 years to keep cedar out.' },
+  ],
+  pear: [
+    { key: 'pad', label: 'Pad / stem spray', kind: 'mix', product: 'Surmount (picloram + fluroxypyr)', altProducts: 'MezaVue, PastureGard HL or Tordon 22K at the same 1%', pct: 1, pctRange: '1%', perGal: 8, method: 'ipt',
+      when: 'Most of the year. Not on wet pads, and not after 3+ days with highs under 50 °F. Spring and fall are best.',
+      note: 'Wet every pad and stem, both sides if you can, but not to runoff. Rain afterwards carries the herbicide to the roots. Pear dies slowly: it yellows within months, and a full kill takes 1–3 years.' },
+    { key: 'broadcast', label: 'Broadcast (dense stands)', kind: 'broadcast', product: 'Surmount', ptPerAcre: 4, carrier: 20, method: 'aerial',
+      when: 'Spring or fall, since pear is a cool-season plant.',
+      note: 'Surmount at 4 pt/acre is the most common broadcast rate, with 20–25 gal/acre of spray by ground or at least 4 gal/acre by air. Tordon 22K at 1 qt/acre is cheaper but slower and less complete.' },
+    { key: 'grub', label: 'Grub and remove', kind: 'none', method: 'grubbing',
+      when: 'Any time of year. Dry weather makes it easier to haul the pads off.',
+      note: 'Dig out the whole plant including the root crown, using a grubbing hoe or a skid steer with a root grapple. Pile and burn or haul it off. Every pad left on the ground can root, so never shred or chain pear.' },
+    { key: 'fire', label: 'Prescribed fire', kind: 'none', method: 'fire',
+      when: 'Winter burns with a burn plan and crew.',
+      note: 'Fire scorches pear and often kills small plants, and insects and disease finish more of the rest. Expect only partial control. Repeat burns or a follow-up pad spray finish the job.' },
+  ],
+};
+export const brushPlan = (target, key) => (BRUSH_PLANS[target] || []).find((m) => m.key === key) || null;
+
+const FLOZ_PER_GAL = 128, ML_PER_FLOZ = 29.5735;
+/** Spray mix for individual plants: gallons of mix, and herbicide + surfactant in fl oz. */
+export function herbicideMix({ plants, perGal, pct, surfPct = 0.25 }) {
+  const n = num(plants), pg = num(perGal);
+  if (!(n > 0) || !(pg > 0)) return null;
+  const mixGal = n / pg;
+  const herbFlOz = mixGal * FLOZ_PER_GAL * (num(pct) / 100);
+  const surfFlOz = mixGal * FLOZ_PER_GAL * (num(surfPct) / 100);
+  return { mixGal, herbFlOz, herbGal: herbFlOz / FLOZ_PER_GAL, surfFlOz, waterGal: mixGal - (herbFlOz + surfFlOz) / FLOZ_PER_GAL,
+    perTank: (tankGal) => ({ herbFlOz: num(tankGal) * FLOZ_PER_GAL * (num(pct) / 100), surfFlOz: num(tankGal) * FLOZ_PER_GAL * (num(surfPct) / 100) }) };
+}
+/** Velpar L soil spot: 2 ml per 3 ft of height or canopy diameter, whichever is greater (at least one 2-ml dose). */
+export function velparSoilSpot({ plants, height, canopy }) {
+  const n = num(plants);
+  const size = Math.max(num(height), num(canopy));
+  if (!(n > 0) || !(size > 0)) return null;
+  const pulls = Math.max(1, Math.ceil(size / 3));
+  const totalMl = n * pulls * 2;
+  return { pulls, mlPerPlant: pulls * 2, totalMl, totalFlOz: totalMl / ML_PER_FLOZ, totalGal: totalMl / ML_PER_FLOZ / FLOZ_PER_GAL };
+}
+/** Broadcast: product at pt/acre plus the spray carrier. */
+export function broadcastNeed({ acres, ptPerAcre, carrier }) {
+  const a = num(acres);
+  if (!(a > 0)) return null;
+  const productPt = a * num(ptPerAcre);
+  return { productPt, productGal: productPt / 8, carrierGal: a * num(carrier) };
+}
