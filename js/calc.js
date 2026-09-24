@@ -694,24 +694,30 @@ export const BRUSH_PLANS = {
     { key: 'cut', label: 'Cut below the lowest green branch (Ashe / blueberry cedar)', kind: 'none', method: 'hand',
       when: 'Any time of year. Pile and burn the slash in winter when there is no burn ban.',
       note: 'Ashe (blueberry) cedar does not resprout from the stump, so no chemical is needed if every green branch is removed.' },
-    { key: 'cutstump', label: 'Cut + stump spray (redberry cedar)', kind: 'mix', product: 'Tordon 22K (picloram)', pct: 3, pctRange: '2–4%', perGal: 40, method: 'ipt',
+    { key: 'cutstump', label: 'Cut + stump spray (redberry cedar)', rup: true, kind: 'mix', product: 'Tordon 22K (picloram)', pct: 3, pctRange: '2–4%', perGal: 40, method: 'ipt',
       when: 'Any time of year. Spray each stump right after it is cut.',
       note: 'Redberry cedar resprouts from the crown. Spray the whole stump surface and exposed roots to runoff with 2–4% Tordon 22K + ¼% surfactant.' },
-    { key: 'leaf', label: 'Leaf spray (cedar under 3 ft)', kind: 'mix', product: 'Tordon 22K (picloram)', pct: 1, pctRange: '1%', perGal: 25, method: 'ipt',
+    { key: 'leaf', label: 'Leaf spray (cedar under 3 ft)', rup: true, kind: 'mix', product: 'Tordon 22K (picloram)', pct: 1, pctRange: '1%', perGal: 25, method: 'ipt',
       when: 'Spring and early summer, while the plants are actively growing.',
       note: 'Wet all the foliage, but not to runoff. Best on blueberry or redberry cedar under 3 ft (76–100% rootkill in AgriLife trials).' },
-    { key: 'soil', label: 'Soil spot (Velpar L, undiluted)', kind: 'soil', product: 'Velpar L (hexazinone)', method: 'ipt',
+    { key: 'soil', label: 'Soil spot (Velpar L, undiluted)', rup: false, kind: 'soil', product: 'Velpar L (hexazinone)', method: 'ipt',
       when: 'Late winter to mid-spring, ideally just before a rain.',
       note: 'Use an exact-delivery gun set to 2 ml. Apply 2 ml for every 3 ft of height or canopy width, whichever is greater, on the soil halfway between the trunk and the drip line. Keep it away from the roots of oaks and other trees you want to keep.' },
+    { key: 'pellet', label: 'Pellets (Pronone Power Pellets)', rup: false, kind: 'pellet', product: 'Pronone Power Pellets (hexazinone)', perUnit: 2, method: 'ipt',
+      when: 'Late winter to spring, before a rain. The pellets need rain to dissolve and reach the roots.',
+      note: 'Drop 1–2 pellets for every 3 ft of height or canopy width, whichever is greater, spaced evenly around the tree halfway between the trunk and the drip line. 2 per 3 ft gave 94% rootkill on redberry cedar in a Texas A&M trial (84% at 1). No more than 600 pellets per acre per season. Same active ingredient as Velpar L, and just as risky to oak roots, so keep it away from trees you want to keep.' },
     { key: 'fire', label: 'Prescribed fire (small cedar)', kind: 'none', method: 'fire',
       when: 'Winter burns (Jan–Mar) with a burn plan, a crew and no burn ban.',
       note: 'Kills cedar under about 4–6 ft. It needs enough grass to carry the fire, which usually means resting the pasture from grazing for a growing season. Repeat every 5–10 years to keep cedar out.' },
   ],
   pear: [
-    { key: 'pad', label: 'Pad / stem spray', kind: 'mix', product: 'Surmount (picloram + fluroxypyr)', altProducts: 'MezaVue, PastureGard HL or Tordon 22K at the same 1%', pct: 1, pctRange: '1%', perGal: 8, method: 'ipt',
+    { key: 'padgu', label: 'Pad / stem spray (PastureGard HL)', rup: false, kind: 'mix', product: 'PastureGard HL (triclopyr + fluroxypyr)', pct: 1, pctRange: '1%', surfPct: 0.25, perGal: 8, method: 'ipt',
+      when: 'Most of the year. Not on wet pads, and not after 3+ days with highs under 50 °F. Spring and fall are best.',
+      note: 'Brush Busters lists PastureGard HL at 1% + 0.25–0.5% surfactant for pad spraying. Wet every pad and stem. The label says to wet pads to the point of runoff. It kills most treated pads (76–100% in Brush Busters ratings) and needs no applicator license. Picloram products (Surmount) usually give a more complete kill of the whole plant, so plan on spot-treating regrowth.' },
+    { key: 'pad', label: 'Pad / stem spray (Surmount)', rup: true, kind: 'mix', product: 'Surmount (picloram + fluroxypyr)', altProducts: 'MezaVue or Tordon 22K at the same 1%', pct: 1, pctRange: '1%', perGal: 8, method: 'ipt',
       when: 'Most of the year. Not on wet pads, and not after 3+ days with highs under 50 °F. Spring and fall are best.',
       note: 'Wet every pad and stem, both sides if you can, but not to runoff. Rain afterwards carries the herbicide to the roots. Pear dies slowly: it yellows within months, and a full kill takes 1–3 years.' },
-    { key: 'broadcast', label: 'Broadcast (dense stands)', kind: 'broadcast', product: 'Surmount', ptPerAcre: 4, carrier: 20, method: 'aerial',
+    { key: 'broadcast', label: 'Broadcast (dense stands)', rup: true, kind: 'broadcast', product: 'Surmount', ptPerAcre: 4, carrier: 20, method: 'aerial',
       when: 'Spring or fall, since pear is a cool-season plant.',
       note: 'Surmount at 4 pt/acre is the most common broadcast rate, with 20–25 gal/acre of spray by ground or at least 4 gal/acre by air. Tordon 22K at 1 qt/acre is cheaper but slower and less complete.' },
     { key: 'grub', label: 'Grub and remove', kind: 'none', method: 'grubbing',
@@ -743,6 +749,16 @@ export function velparSoilSpot({ plants, height, canopy }) {
   const pulls = Math.max(1, Math.ceil(size / 3));
   const totalMl = n * pulls * 2;
   return { pulls, mlPerPlant: pulls * 2, totalMl, totalFlOz: totalMl / ML_PER_FLOZ, totalGal: totalMl / ML_PER_FLOZ / FLOZ_PER_GAL };
+}
+/** Hexazinone pellets: perUnit pellets per 3 ft of height or canopy (the greater), at least one dose. */
+export function pelletNeed({ plants, height, canopy, perUnit = 2, perAcre }) {
+  const n = num(plants);
+  const size = Math.max(num(height), num(canopy));
+  if (!(n > 0) || !(size > 0)) return null;
+  const perPlant = Math.max(1, Math.ceil(size / 3)) * num(perUnit, 2);
+  const pellets = n * perPlant;
+  const perAcreUsed = num(perAcre) > 0 ? num(perAcre) * perPlant : null;
+  return { perPlant, pellets, perAcreUsed, overLimit: perAcreUsed != null && perAcreUsed > 600 };
 }
 /** Broadcast: product at pt/acre plus the spray carrier. */
 export function broadcastNeed({ acres, ptPerAcre, carrier }) {

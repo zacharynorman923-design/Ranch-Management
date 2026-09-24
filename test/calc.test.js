@@ -337,3 +337,15 @@ test('brush chemistry: 1% mix, Velpar soil spot, broadcast', () => {
   assert.equal(C.brushPlan('cedar', 'soil').kind, 'soil');
   assert.equal(C.herbicideMix({ plants: 0, perGal: 8, pct: 1 }), null);
 });
+
+test('Pronone pellets: per 3 ft, 600/acre limit; license flags', () => {
+  const p = C.pelletNeed({ plants: 50, height: 5, canopy: 7, perUnit: 2 });
+  assert.equal(p.perPlant, 6);   // 7 ft canopy → 3 units × 2 pellets
+  assert.equal(p.pellets, 300);
+  const dense = C.pelletNeed({ plants: 1000, height: 6, canopy: 4, perUnit: 2, perAcre: 200 });
+  assert.equal(dense.perAcreUsed, 800);
+  assert.equal(dense.overLimit, true);
+  assert.equal(C.brushPlan('pear', 'padgu').rup, false);
+  assert.equal(C.brushPlan('pear', 'pad').rup, true);
+  assert.equal(C.brushPlan('cedar', 'pellet').rup, false);
+});
