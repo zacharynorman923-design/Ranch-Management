@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.cfg.outputs.ready == 'true'
         with:
-          node-version: 20
+          node-version: 22   # wrangler 4 requires Node 22+
 
       - name: Install wrangler
         if: steps.cfg.outputs.ready == 'true'
@@ -47,7 +47,11 @@ jobs:
       - name: Find or create the D1 database
         if: steps.cfg.outputs.ready == 'true'
         run: |
-          find_id() { npx wrangler d1 list --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const l=JSON.parse(s);const d=l.find(x=>x.name==="ranch-relay");process.stdout.write(d?(d.uuid||d.database_id||""):"")})'; }
+          set -o pipefail
+          find_id() {
+            npx wrangler d1 list --json > "$RUNNER_TEMP/d1.json" || { echo "::error::wrangler could not list D1 databases. Check that CLOUDFLARE_API_TOKEN has Account · D1 · Edit and CLOUDFLARE_ACCOUNT_ID is right." >&2; cat "$RUNNER_TEMP/d1.json" >&2; exit 1; }
+            node -e 'const l=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const d=l.find(x=>x.name==="ranch-relay");process.stdout.write(d?(d.uuid||d.database_id||""):"")' "$RUNNER_TEMP/d1.json"
+          }
           ID="$(find_id)"
           if [ -z "$ID" ]; then
             npx wrangler d1 create ranch-relay
