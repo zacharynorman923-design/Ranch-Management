@@ -10,7 +10,7 @@ JavaScript. It installs to a phone's home screen as a PWA and **works with no
 signal**. Every record is stored on the device in IndexedDB.
 
 ```
-npm test          # 24 unit tests for the ranch math (Node 18+)
+npm test          # 28 tests: ranch math + the relay run against SQLite (Node 22+)
 npm start         # serve at http://localhost:8080 (any static server works)
 ```
 
@@ -117,6 +117,21 @@ it in one step under Settings.
   feeders and batteries, lease insurance, NRCS deadlines, brush retreatment,
   tasks and wildlife practices, plus quick-log buttons.
 
+## Automatic rain and game-camera photos
+`relay/` is a small Cloudflare Worker on the free plan that runs while your
+phone is off:
+- It pulls **Tactacam Reveal** photos every 15 minutes, with battery, signal,
+  GPS, temperature and moon phase.
+- It pulls **rain** every hour: from an Ambient Weather gauge once you have
+  one, and from a free weather-model estimate for the ranch until then. The
+  estimate is backfilled about 13 months.
+
+The app pulls from the relay whenever it has signal. Cameras appear under
+Cams & feeders with battery and last-photo alerts. Photos land in the photo
+log with one-tap tags, and rain fills the log marked *(auto)*. A reading you
+log by hand always wins over the automatic one. Setup takes about 15 minutes
+in a browser, with no computer needed: see **[relay/README.md](relay/README.md)**.
+
 ## Data, offline and backup
 - Records live in **IndexedDB on the device**, and photos live in a separate
   store. A service worker caches the app shell. It uses the network when there
@@ -128,7 +143,7 @@ it in one step under Settings.
 - Every table has **CSV export and import**. Headers match field names or
   labels, and dates accept `9/1/2026`. You can load a herd spreadsheet, a
   sale-barn export or tank-sensor readings.
-- There is no cloud sync yet. See "Next" below.
+- Your own records don't sync between phones yet (see "Next" below). Automatic rain and camera data reaches every phone that's connected to the relay.
 
 ## Code map
 | File | What's in it |
@@ -154,6 +169,5 @@ it in one step under Settings.
 
 ## Next
 - Sync between phones (a small backend or a shared-drive file).
-- Direct sensor integrations (cellular tank monitors, rain gauges) in place of
-  CSV import.
+- Tank-level sensors through the relay, the same way as the rain gauge.
 - Drawn polygons for brush treatments and pastures on the map.

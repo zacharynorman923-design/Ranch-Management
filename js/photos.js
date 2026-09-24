@@ -22,17 +22,19 @@ export async function addPhotoFile(file, meta = {}) {
   const exif = readExif(buf);
   let loc = exif.lat != null ? { lat: exif.lat, lon: exif.lon } : null;
   const fresh = Date.now() - (file.lastModified || 0) < 5 * 60 * 1000;
-  if (!loc && fresh && navigator.geolocation) {
+  if (!loc && fresh && !meta.noGps && navigator.geolocation) {
     loc = await new Promise((res) => navigator.geolocation.getCurrentPosition(
       (p) => res({ lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6) }),
       () => res(null), { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 }));
   }
-  const data = await downscale(file);
+  const data = await downscale(file, meta.maxEdge);
+  const { maxEdge, noGps, ...extra } = meta;
   const rec = await db.put('photos', {
     date: exif.date || ymd(new Date(file.lastModified || Date.now())),
-    caption: meta.caption || file.name.replace(/\.[^.]+$/, ''),
-    tags: meta.tags || '', device: meta.device || '', loc, packet: !!meta.packet,
     file: file.name,
+    ...extra,
+    caption: meta.caption || file.name.replace(/\.[^.]+$/, ''),
+    tags: meta.tags || '', device: meta.device || '', loc: meta.loc || loc, packet: !!meta.packet,
   });
   await db.putBlob(rec.id, data);
   urlCache.set(rec.id, data);
@@ -44,7 +46,7 @@ export async function deletePhoto(id) {
   urlCache.delete(id);
 }
 
-async function downscale(file) {
+async function downscale(file, maxEdge = MAX_EDGE) {
   const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
   const img = bmp || await new Promise((res, rej) => {
     const i = new Image();
@@ -53,7 +55,7 @@ async function downscale(file) {
     i.src = URL.createObjectURL(file);
   });
   const w = img.width, h = img.height;
-  const k = Math.min(1, MAX_EDGE / Math.max(w, h));
+  const k = Math.min(1, maxEdge / Math.max(w, h));
   const c = document.createElement('canvas');
   c.width = Math.round(w * k);
   c.height = Math.round(h * k);

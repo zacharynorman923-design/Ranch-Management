@@ -78,7 +78,17 @@ export function alerts(asOf = C.today()) {
   if (st.status.state === 'over') push('bad', `${st.status.msg} (${C.carryingCapacity({ acres: s.acres, acresPerAU: s.acresPerAU }).head} hd at normal rain; now ${Math.round((st.rain.ratio ?? 1) * 100)}% of normal)`, '#/stocking', -100);
   if (st.rain.missing.length >= 3) push('warn', `Rain log is missing ${st.rain.missing.length} of the last 12 months — the stocking calculator is guessing`, '#/rain', -10);
 
+  if (s.relayUrl && s.relayToken) {
+    const last = s.relayLastSync ? C.daysBetween(s.relayLastSync.slice(0, 10), asOf) : null;
+    if (last == null || last > 2) push('warn', `Relay hasn't synced ${last == null ? 'yet' : `in ${last} days`}. Open the app with signal`, '#/settings', -5);
+    for (const e of s.relayLastResult?.errors || []) push('warn', `Relay: ${e}`, '#/settings', -4);
+  }
   for (const d of db.all('devices')) {
+    if (d.batteryPct !== '' && d.batteryPct != null && Number(d.batteryPct) < 25) push(Number(d.batteryPct) < 10 ? 'bad' : 'warn', `${d.name}: battery ${Math.round(d.batteryPct)}%`, '#/devices', Number(d.batteryPct) - 50);
+    if (d.lastPhoto && d.revealId) {
+      const quiet = Math.floor((Date.now() - Date.parse(d.lastPhoto)) / 86400e3);
+      if (quiet >= 3) push('warn', `${d.name}: no photos in ${quiet} days (dead, knocked down, or no signal?)`, '#/devices', -quiet);
+    }
     const b = C.dueInfo(d.batteryDate, d.batteryDays, asOf);
     if (b && b.state !== 'ok') push(b.state === 'overdue' ? 'bad' : 'warn', `${d.name}: batteries ${daysTxt(b.daysLeft)}`, '#/devices', b.daysLeft);
     if (['feeder', 'protein'].includes(d.type)) {

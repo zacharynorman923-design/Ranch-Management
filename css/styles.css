@@ -193,6 +193,8 @@ main:focus { outline: none; }
 .gallery figure { cursor: pointer; }
 .gallery img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 10px; background: var(--panel-2); display: block; }
 .gallery figcaption { font-size: 12.5px; margin-top: 4px; }
+.quick-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.quick-tags .chip { font-size: 12px; padding: 3px 9px; }
 .layer-toggles { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; font-size: 13px; }
 .layer-toggles label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
@@ -201,6 +203,8 @@ main:focus { outline: none; }
 .ranch-map .pin { cursor: pointer; }
 .ranch-map .pin circle { stroke: var(--panel); stroke-width: 3; }
 .ranch-map text { font-size: 28px; fill: var(--ink); paint-order: stroke; stroke: var(--panel-2); stroke-width: 5px; }
+.relay-out { margin-top: 12px; padding: 10px; background: var(--panel-2); border-radius: 10px; overflow-x: auto; white-space: pre-wrap; }
+.btn[disabled] { opacity: .5; cursor: default; }
 .normals { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
 .normals label { font-size: 12px; color: var(--muted); display: grid; gap: 3px; }
 
