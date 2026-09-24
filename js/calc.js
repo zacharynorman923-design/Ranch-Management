@@ -612,3 +612,68 @@ export function bentoniteNeed({ area, rate, depth = 0, margin = 0.25, bagLb = 50
     costBulk: num(tonPrice) > 0 ? tons * num(tonPrice) : null,
   };
 }
+
+/* ------------------------ 13. dove crop recommendations ------------------ */
+/* Texas A&M AgriLife recommendations. Dove crops: "Dove Hunting and Normal
+   Agricultural Operations" (EWF-104): broadcast lb/acre, drilled at half the
+   broadcast rate, and Texas planting windows. Grain sorghum window: AgriLife
+   San Angelo, West Central Texas (plant from ~Apr 15 once soil is ≥60–65 °F;
+   yields drop after Jun 15). Wheat: AgriLife grain-wheat rates for Central
+   Texas. Planting inside these rates and dates is what makes a field a
+   "normal agricultural planting" under the federal baiting rule. */
+export const DOVE_CROPS = [
+  { key: 'milo', label: 'Grain sorghum / milo', broadcast: [10, 20], drilledFactor: 0.5, window: ['04-15', '06-15'], days: [90, 110], source: 'EWF-104; AgriLife San Angelo (West Central TX sorghum)',
+    tip: 'Plant when the soil is at least 60–65 °F at seed depth (read it at 7–8 am). An early or medium-early hybrid gives time for staggered mowing before the opener.' },
+  { key: 'sunflower', label: 'Sunflower (Peredovik)', broadcast: [10, 15], drilledFactor: 0.5, window: ['04-01', '04-30'], days: [65, 90], source: 'EWF-104',
+    tip: 'AgriLife lists April. April sunflowers can mature by July, so leave some rows standing and mow in strips from mid-August.' },
+  { key: 'millet', label: 'Proso millet (dove / white proso)', broadcast: [20, 30], drilledFactor: 0.5, window: ['03-01', '09-30'], days: [60, 75], source: 'EWF-104',
+    tip: 'Fast. Plant 2–3 strips a couple of weeks apart so seed is fresh at the opener.' },
+  { key: 'browntop', label: 'Browntop millet', broadcast: [20, 30], drilledFactor: 0.5, window: ['03-01', '09-30'], days: [45, 60], source: 'EWF-104',
+    tip: 'The fastest option. It is also a good late planting for the second split.' },
+  { key: 'wheat', label: 'Wheat (grain)', broadcast: [90, 120], drilled: [60, 90], window: ['10-15', '11-30'], days: [200, 230], source: 'AgriLife wheat recommendations, Central Texas',
+    tip: 'Wheat planted in fall gives seed the next spring, not by Sept 1. Top-sowing wheat on a dove field is legal only at AgriLife rates and dates for wheat planting. Outside them it is baiting.' },
+  { key: 'native', label: 'Native (croton / native sunflower)', broadcast: null, window: ['01-01', '03-15'], days: null, source: 'AgriLife / TPWD dove habitat guidance',
+    tip: 'No seed. Disk strips in late winter to stir up croton (dove weed) and native sunflower.' },
+];
+export const doveCrop = (key) => DOVE_CROPS.find((c) => c.key === key) || null;
+
+/**
+ * AgriLife seeding rate, planting window and "plant by" date for a crop,
+ * for the season whose opener is `opener` (ISO). `method` = broadcast|drilled.
+ * `plantDate` / `seedRate` (lb/ac) are checked against the recommendation.
+ */
+export function doveCropAdvice(key, { opener, method = 'broadcast', acres, plantDate, seedRate } = {}) {
+  const c = doveCrop(key);
+  if (!c) return null;
+  const year = yearOf(opener);
+  // EWF-104: drilled = half the broadcast rate, unless the crop lists its own drilled rate.
+  const rate = !c.broadcast ? null
+    : method === 'drilled' ? (c.drilled || c.broadcast.map((x) => Math.round(x * (c.drilledFactor ?? 0.5) * 10) / 10))
+    : c.broadcast;
+  // Wheat for this opener would have been planted the previous fall.
+  const wYear = c.key === 'wheat' ? year - 1 : year;
+  const window = [`${wYear}-${c.window[0]}`, `${wYear}-${c.window[1]}`];
+  let plantBy = null, plantFrom = window[0];
+  if (c.days) {
+    // Mature at least 21 days before the opener, for the first mow strip.
+    plantBy = addDays(opener, -(c.days[1] + 21));
+    if (plantBy > window[1]) plantBy = window[1];
+    if (c.key === 'millet' || c.key === 'browntop') plantFrom = addDays(opener, -(c.days[1] + 45)) > window[0] ? addDays(opener, -(c.days[1] + 45)) : window[0];
+  }
+  const checks = [];
+  if (plantDate) {
+    const inWindow = plantDate >= window[0] && plantDate <= window[1];
+    checks.push({ ok: inWindow, text: inWindow ? 'Planting date is inside the AgriLife window.' : `Planting date is outside the AgriLife window (${window[0]} to ${window[1]}). Keep records showing it was a normal agricultural planting.` });
+  }
+  if (seedRate !== '' && seedRate != null && rate) {
+    const r = Number(seedRate);
+    const ok = r >= rate[0] * 0.9 && r <= rate[1] * 1.1;
+    checks.push({ ok, text: ok ? `Seeding rate ${r} lb/ac is within the ${rate[0]}–${rate[1]} lb/ac ${method} range.` : `Seeding rate ${r} lb/ac is outside the ${rate[0]}–${rate[1]} lb/ac AgriLife ${method} range. Heavy seeding on a dove field can be treated as baiting.` });
+  }
+  return {
+    crop: c, method, rate, window, plantFrom, plantBy,
+    daysMid: c.days ? Math.round((c.days[0] + c.days[1]) / 2) : null,
+    seedLbs: rate && num(acres) > 0 ? [Math.ceil(rate[0] * num(acres)), Math.ceil(rate[1] * num(acres))] : null,
+    checks,
+  };
+}

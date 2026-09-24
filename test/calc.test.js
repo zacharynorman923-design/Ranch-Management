@@ -285,3 +285,23 @@ test('bentonite need: rate, depth adjustment, margin, bags', () => {
   near(C.bentoniteNeed({ area: 100, rate: 2, depth: 16, margin: 0 }).rateAdj, 3, 1e-9);
   assert.equal(C.bentoniteNeed({ area: 0, rate: 2 }), null);
 });
+
+test('AgriLife dove crop advice: rates, drilled at half, windows, plant-by', () => {
+  const m = C.doveCropAdvice('milo', { opener: '2027-09-01', acres: 12 });
+  assert.deepEqual(m.rate, [10, 20]);
+  assert.deepEqual(m.window, ['2027-04-15', '2027-06-15']);
+  assert.equal(m.plantBy, '2027-04-23'); // 110 days + 21 before Sep 1
+  assert.deepEqual(m.seedLbs, [120, 240]);
+  const d = C.doveCropAdvice('millet', { opener: '2027-09-01', method: 'drilled' });
+  assert.deepEqual(d.rate, [10, 15]);
+  const sf = C.doveCropAdvice('sunflower', { opener: '2027-09-01' });
+  assert.equal(sf.plantBy, '2027-04-30'); // capped at the end of the April window
+  assert.deepEqual(C.doveCropAdvice('wheat', { opener: '2027-09-01', method: 'drilled' }).rate, [60, 90]);
+  const w = C.doveCropAdvice('wheat', { opener: '2027-09-01' });
+  assert.deepEqual(w.window, ['2026-10-15', '2026-11-30']);
+  const bad = C.doveCropAdvice('milo', { opener: '2027-09-01', method: 'drilled', plantDate: '2027-07-10', seedRate: 25 });
+  assert.equal(bad.checks.filter((c) => !c.ok).length, 2);
+  const good = C.doveCropAdvice('milo', { opener: '2027-09-01', plantDate: '2027-05-01', seedRate: 15 });
+  assert.ok(good.checks.every((c) => c.ok));
+  assert.equal(C.doveCropAdvice('native', { opener: '2027-09-01' }).rate, null);
+});
