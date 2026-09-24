@@ -66,6 +66,7 @@ function render() {
   document.getElementById('page-title').textContent = r.title;
   document.title = `${r.title} · ${S().ranchName}`;
   renderNav(name);
+  document.getElementById('settings-btn')?.classList.toggle('on', name === 'settings');
   try {
     main.innerHTML = r.render(params);
     r.bind?.(main, render, params);
