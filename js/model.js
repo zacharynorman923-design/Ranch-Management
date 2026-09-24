@@ -133,10 +133,10 @@ export function alerts(asOf = C.today()) {
     const d = C.daysBetween(asOf, m.due);
     if (d <= 60) push(d < 0 ? 'bad' : 'warn', `NRCS ${m.contract}: ${m.description} ${daysTxt(d)}`, '#/nrcs', d);
   }
-  for (const b of db.all('brush')) {
+  for (const b of db.all('brush').filter((x) => x.status !== 'planned')) {
     const r = C.brushRow(b, asOf);
     if (r.daysLeft != null && r.daysLeft <= 180) {
-      const redone = db.all('brush').some((x) => x.area === b.area && x.species === b.species && x.date > b.date);
+      const redone = db.all('brush').some((x) => x.status !== 'planned' && x.area === b.area && x.species === b.species && x.date > b.date);
       if (!redone) push(r.overdue ? 'warn' : 'info', `Brush retreatment due: ${b.species}${b.area ? ', ' + b.area : ''} ${daysTxt(r.daysLeft)}`, '#/brush', r.daysLeft + 30);
     }
   }
@@ -158,7 +158,7 @@ const daysTxt = (d) => (d < 0 ? `${-d} d overdue` : d === 0 ? 'today' : `in ${d}
 export function practiceCoverage(year) {
   return C.practiceCoverage(year, {
     practices: db.all('practices'),
-    brush: db.all('brush'),
+    brush: db.all('brush').filter((x) => x.status !== 'planned'),
     surveys: db.all('surveys'),
     waterWork: db.all('waterwork'),
     doveFields: db.all('dovefields'),

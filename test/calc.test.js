@@ -318,3 +318,22 @@ test('croton: winter sowing window across the new year, supplier rate', () => {
   assert.match(late.checks[0].text, /recommended window/);
   assert.deepEqual(C.doveCropAdvice('native', { opener: '2027-09-01' }).window, ['2026-12-01', '2027-02-28']);
 });
+
+test('brush chemistry: 1% mix, Velpar soil spot, broadcast', () => {
+  const m = C.herbicideMix({ plants: 400, perGal: 8, pct: 1 });
+  near(m.mixGal, 50, 1e-9);
+  near(m.herbFlOz, 64, 1e-9);            // 1% of 50 gal = 0.5 gal = 64 fl oz
+  near(m.surfFlOz, 16, 1e-9);            // 0.25%
+  near(m.perTank(4).herbFlOz, 5.12, 1e-9); // a 4-gal backpack
+  const v = C.velparSoilSpot({ plants: 100, height: 5, canopy: 7 });
+  assert.equal(v.pulls, 3);               // 7 ft canopy → 3 doses of 2 ml
+  assert.equal(v.totalMl, 600);
+  near(v.totalFlOz, 600 / 29.5735, 1e-9);
+  assert.equal(C.velparSoilSpot({ plants: 10, height: 1, canopy: 1 }).mlPerPlant, 2);
+  const b = C.broadcastNeed({ acres: 20, ptPerAcre: 4, carrier: 20 });
+  assert.equal(b.productPt, 80);
+  assert.equal(b.productGal, 10);
+  assert.equal(b.carrierGal, 400);
+  assert.equal(C.brushPlan('cedar', 'soil').kind, 'soil');
+  assert.equal(C.herbicideMix({ plants: 0, perGal: 8, pct: 1 }), null);
+});

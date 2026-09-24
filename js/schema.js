@@ -220,9 +220,10 @@ export const COLLECTIONS = {
   brush: {
     label: 'Brush treatment', sort: '-date',
     fields: [
-      { k: 'date', label: 'Date', t: 'date', req: 1, def: today },
+      { k: 'status', label: 'Status', t: 'select', opts: o(['done', 'Done (cleared)'], ['planned', 'Planned']), def: 'done' },
+      { k: 'date', label: 'Date', t: 'date', req: 1, def: today, help: 'For planned work, the target date.' },
       { k: 'area', label: 'Area / pasture', t: 'text' },
-      { k: 'species', label: 'Target', t: 'select', opts: o('cedar', 'mesquite', ['prickly pear', 'Prickly pear'], 'other'), def: 'cedar' },
+      { k: 'species', label: 'Target', t: 'select', opts: o(['cedar', 'Cedar (juniper)'], ['prickly pear', 'Prickly pear'], 'mesquite', 'other'), def: 'cedar' },
       { k: 'method', label: 'Method', t: 'select', opts: o(['mechanical', 'Mechanical (dozer/skid steer)'], ['hand', 'Hand cut / lopping'], ['ipt', 'Individual plant treatment (herbicide)'], ['aerial', 'Aerial herbicide'], ['fire', 'Prescribed fire'], ['grubbing', 'Grubbing']), def: 'mechanical' },
       { k: 'acres', label: 'Acres', t: 'num', req: 1 },
       { k: 'cost', label: 'Total cost ($)', t: 'num' },
@@ -230,7 +231,7 @@ export const COLLECTIONS = {
       { k: 'retreatYears', label: 'Retreat after (years)', t: 'num', def: (r) => BRUSH_RETREAT_YEARS[r?.species] ?? 10, help: 'Rule of thumb: cedar ~10, mesquite ~7, prickly pear ~5.' },
       loc, notes, photos,
     ],
-    cols: ['date', 'area', 'species', 'method', 'acres', 'cost'],
+    cols: ['date', 'status', 'area', 'species', 'method', 'acres', 'cost'],
   },
   fences: {
     label: 'Fence / gate', sort: 'name',
