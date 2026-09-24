@@ -176,7 +176,7 @@ export function brush() {
 
 /* ---------------------- cedar & prickly pear planner ---------------------- */
 const PEAR_SIZES = { small: ['Small clumps (under 2 ft)', 20], medium: ['Medium (2–4 ft)', 8], large: ['Large (over 4 ft / 6 ft wide)', 3] };
-const PLAN_DEFAULTS = { target: 'cedar', method: 'cutstump', plants: '', density: '', acres: '', height: 4, canopy: 4, pearSize: 'medium', perGal: '', pct: '', tank: 4, price: '', carrier: 20, ptPerAcre: 4 };
+const PLAN_DEFAULTS = { target: 'cedar', method: 'pellet', perUnit: 2, plants: '', density: '', acres: '', height: 4, canopy: 4, pearSize: 'medium', perGal: '', pct: '', tank: 4, price: '', carrier: 20, ptPerAcre: 4 };
 const planState = () => ({ ...PLAN_DEFAULTS, ...(db.settings().brushPlan || {}) });
 function planResult(P) {
   const m = C.brushPlan(P.target, P.method) || C.BRUSH_PLANS[P.target][0];
@@ -185,8 +185,10 @@ function planResult(P) {
   if (m.kind === 'mix') {
     const perGal = Number(P.perGal) > 0 ? Number(P.perGal) : (m.key === 'pad' ? PEAR_SIZES[P.pearSize]?.[1] : m.perGal);
     const pct = Number(P.pct) > 0 ? Number(P.pct) : m.pct;
-    r = C.herbicideMix({ plants, perGal, pct });
+    r = C.herbicideMix({ plants, perGal, pct, surfPct: m.surfPct ?? 0.25 });
     if (r) Object.assign(r, { perGal, pct, cost: Number(P.price) > 0 ? r.herbGal * Number(P.price) : null });
+  } else if (m.kind === 'pellet') {
+    r = C.pelletNeed({ plants, height: P.height, canopy: P.canopy, perUnit: Number(P.perUnit) || m.perUnit, perAcre: Number(P.plants) > 0 ? null : P.density });
   } else if (m.kind === 'soil') {
     r = C.velparSoilSpot({ plants, height: P.height, canopy: P.canopy });
     if (r) r.cost = Number(P.price) > 0 ? r.totalGal * Number(P.price) : null;
@@ -213,6 +215,13 @@ function brushPlanner() {
       ${r.cost != null ? stat('Herbicide cost', usd(r.cost)) : ''}
     </div>
     <p class="note">Per <b>${esc(P.tank)}-gal</b> tank: <b>${r.perTank(P.tank).herbFlOz.toFixed(1)} fl oz</b> herbicide + <b>${r.perTank(P.tank).surfFlOz.toFixed(1)} fl oz</b> surfactant, then top up with water. ${Math.ceil(r.mixGal / Number(P.tank || 1))} tank fills.</p>`;
+  } else if (m.kind === 'pellet' && r) {
+    out = `<div class="stats">
+      ${stat('Per tree', `${r.perPlant} pellets`, `${Number(P.perUnit) || m.perUnit} per 3 ft of height or canopy`, 'accent')}
+      ${stat('Pellets total', n0(r.pellets), `for ${n0(plants)} trees`)}
+      ${r.perAcreUsed != null ? stat('Per acre', n0(r.perAcreUsed), 'label max 600 per season', r.overLimit ? 'bad' : '') : ''}
+    </div>
+    ${r.overLimit ? '<p class="note warn">That is over the 600-pellets-per-acre label limit. Treat the biggest trees another way (cut them), or split the job across seasons.</p>' : ''}`;
   } else if (m.kind === 'soil' && r) {
     out = `<div class="stats">
       ${stat('Per tree', `${r.mlPerPlant} ml`, `${r.pulls} pull${r.pulls > 1 ? 's' : ''} of a 2-ml gun`, 'accent')}
@@ -233,21 +242,26 @@ function brushPlanner() {
     <div class="panel-head"><h2>Plan cedar &amp; prickly pear work</h2>${pill('Texas A&M Brush Busters')}</div>
     <div class="seg">${[['cedar', 'Cedar'], ['pear', 'Prickly pear']].map(([k, l]) => `<button class="${P.target === k ? 'on' : ''}" data-plan-target="${k}">${l}</button>`).join('')}</div>
     <div class="form-grid">
-      ${sel('method', 'Method', methods.map((x) => [x.key, `${x.label}${x.kind === 'none' ? ' (no chemical)' : ''}`]))}
+      ${sel('method', 'Method', methods.map((x) => [x.key, `${x.label}${x.kind === 'none' ? ' · no chemical' : x.rup ? ' · license needed' : ' · no license needed'}`]))}
       ${m.kind === 'broadcast' ? inp('acres', 'Acres to spray') + inp('ptPerAcre', 'Rate (pints/acre)') + inp('carrier', 'Spray volume (gal/acre)', '', '20–25 by ground, 4+ by air.')
         : m.kind === 'none' ? '' : `${inp('plants', m.key === 'cutstump' ? 'Stumps to treat' : 'Plants to treat')}
           ${inp('density', '…or plants per acre', '', 'Count one typical 1/10 acre (66 × 66 ft) and multiply by 10.')}${inp('acres', 'Acres')}`}
-      ${m.kind === 'soil' ? inp('height', 'Average height (ft)') + inp('canopy', 'Average canopy width (ft)') : ''}
+      ${m.kind === 'soil' || m.kind === 'pellet' ? inp('height', 'Average height (ft)') + inp('canopy', 'Average canopy width (ft)') : ''}
+      ${m.kind === 'pellet' ? sel('perUnit', 'Pellets per 3 ft', [['2', '2 (94% rootkill, redberry)'], ['1', '1 (84% rootkill)']]) : ''}
       ${m.key === 'pad' ? sel('pearSize', 'Typical plant size', Object.entries(PEAR_SIZES).map(([k, v]) => [k, v[0]])) : ''}
       ${m.kind === 'mix' ? inp('perGal', 'Plants per gallon of mix', `placeholder="${m.key === 'pad' ? PEAR_SIZES[P.pearSize]?.[1] : m.perGal} (estimate)"`, 'Spray one full tank, count the plants it covered, and put that here.')
         + inp('pct', 'Herbicide % in the mix', `placeholder="${m.pct}"`, `Brush Busters: ${m.pctRange}.`) + inp('tank', 'Sprayer tank (gal)') : ''}
-      ${m.kind !== 'none' ? inp('price', `${m.kind === 'broadcast' ? m.product : m.product.split(' (')[0]} price ($/gal)`) : ''}
+      ${m.kind !== 'none' && m.kind !== 'pellet' ? inp('price', `${m.kind === 'broadcast' ? m.product : m.product.split(' (')[0]} price ($/gal)`) : ''}
     </div>
+    ${m.kind === 'none' ? '' : m.rup
+      ? `<p class="note warn">🔒 <b>Restricted use.</b> ${esc(m.product.split(' (')[0])} needs a Texas Department of Agriculture private applicator license to buy and apply, or a licensed applicator. No license? Try ${P.target === 'pear' ? '<b>Pad / stem spray (PastureGard HL)</b>' : '<b>Pellets</b> or <b>Soil spot (Velpar L)</b>'}.</p>`
+      : `<p class="note">✅ <b>General use.</b> No applicator license needed. You can buy it at the feed store. Still read and follow the label.</p>`}
     ${out}
     <h3>How to do it</h3>
     <ol class="steps">
       ${m.kind === 'mix' ? `<li>Mix: fill the tank half full of water, add <b>${esc(m.product)}</b> at ${esc(m.pctRange)}${m.altProducts ? ` (or ${esc(m.altProducts)})` : ''}, then 0.25% surfactant. Add spray dye so you can see what's done, and top up.</li>` : ''}
       ${m.kind === 'soil' ? '<li>Set an exact-delivery handgun or syringe to 2 ml and attach it to the Velpar L jug. It is used undiluted.</li>' : ''}
+      ${m.kind === 'pellet' ? '<li>Pronone Power Pellets come in jars and pails from ranch-supply stores. Carry them in a pouch and count as you go. Marking treated trees with flagging tape helps.</li>' : ''}
       <li>${esc(m.note)}</li>
       <li><b>When:</b> ${esc(m.when)}</li>
       <li>Outline the area on the <a href="#/map?outline=newbrush">map</a> and log the job below, so it counts as habitat control in the valuation packet and shows up for retreatment in ${P.target === 'cedar' ? '~10' : '~5'} years.</li>
@@ -265,7 +279,8 @@ function brushPlanner() {
     <details class="lines"><summary>Safety &amp; label notes</summary>
       <ul class="plain small" style="margin-top:8px">
         <li>• Always read and follow the label. It is the law, and it overrides these notes.</li>
-        <li>• <b>Picloram products</b> (Tordon 22K, Surmount and similar) are <b>Restricted Use Pesticides</b>. Buying and applying them needs a Texas Department of Agriculture private applicator license, or hire a licensed applicator. Check each product's label, including Velpar L.</li>
+        <li>• <b>Restricted use (license needed):</b> Tordon 22K, Surmount and MezaVue, which all contain picloram. Buying and applying them needs a Texas Department of Agriculture private applicator license, or hire a licensed applicator.</li>
+        <li>• <b>General use (no license):</b> Pronone Power Pellets and Velpar L (hexazinone) for cedar, and PastureGard HL (triclopyr + fluroxypyr) for prickly pear. Product status can change, so check the label on the container you buy.</li>
         <li>• Picloram and hexazinone move through the soil. Keep them away from the root zones of live oaks and other trees you want to keep (roots reach well past the drip line), and away from wells, tanks and creeks.</li>
         <li>• Don't spray in wind or when drift could reach neighbors' crops or gardens. Wear gloves and eye protection, and follow the label's grazing and haying restrictions.</li>
         <li>• Mature cedar–oak woodland can be habitat for the endangered golden-cheeked warbler. Talk to TPWD or USFWS before clearing big, old stands.</li>
@@ -276,12 +291,13 @@ function brushPlanner() {
 export function bindBrush(el) {
   el.querySelectorAll('[data-plan-target]').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.planTarget;
-    db.saveSettings({ brushPlan: { ...planState(), target: t, method: C.BRUSH_PLANS[t][t === 'cedar' ? 1 : 0].key, perGal: '', pct: '', price: '' } });
+    db.saveSettings({ brushPlan: { ...planState(), target: t, method: t === 'cedar' ? 'pellet' : 'padgu', perGal: '', pct: '', price: '' } });
   }));
   el.querySelectorAll('[data-plan-log]').forEach((b) => b.addEventListener('click', () => {
     const P = planState();
     const { m, plants, r } = planResult(P);
     const chem = m.kind === 'mix' && r ? `${r.mixGal.toFixed(1)} gal of ${r.pct}% ${m.product} + 0.25% surfactant (${floz(r.herbFlOz)} herbicide) on ${n0(plants)} plants`
+      : m.kind === 'pellet' && r ? `Pronone Power Pellets, ${r.perPlant} per tree × ${n0(plants)} trees (${n0(r.pellets)} pellets)`
       : m.kind === 'soil' && r ? `Velpar L soil spot, ${r.mlPerPlant} ml/tree × ${n0(plants)} trees (${r.totalFlOz.toFixed(1)} fl oz)`
       : m.kind === 'broadcast' && r ? `${m.product} ${P.ptPerAcre} pt/ac broadcast, ${r.productGal.toFixed(1)} gal product in ${n0(r.carrierGal)} gal spray`
       : 'No chemical';
