@@ -34,12 +34,100 @@ export function water() {
       <div class="form-grid"><label class="field">Flag a point if not checked in (days)<input type="number" data-set="waterStaleDays" value="${s.waterStaleDays}"></label></div>
       <p class="note">Remote level sensors (LoRa/cellular tank monitors, or a trail camera aimed at a trough float) save a 3-hour drive from Houston. Most can export a CSV. Map its columns to <i>point, date, level</i> and use <b>⋯ → Import CSV</b> on the checks table, with <i>source</i> = sensor.</p>
     </section>
+    ${bentonitePanel()}
     ${listPanel('waterpoints')}
     ${listPanel('waterchecks', { title: 'Level & trough checks' })}
     ${listPanel('waterwork', { title: 'Well / windmill maintenance', note: 'Tick “counts as supplemental water for wildlife” on guzzlers, wildlife troughs and similar work. It feeds the 1-d-1 wildlife practice tracker.' })}`;
 }
 export function bindWater(el) {
   el.querySelectorAll('[data-check]').forEach((b) => b.addEventListener('click', () => openForm('waterchecks', null, { point: b.dataset.check })));
+  el.querySelector('[data-bent-log]')?.addEventListener('click', () => {
+    const b = bentoniteState();
+    const r = bentoniteResult(b);
+    if (!r?.need) return;
+    openForm('waterwork', null, {
+      point: b.point || '',
+      work: `Sealed with sodium bentonite: ${n0(r.need.lbs)} lb (${r.need.bags} × ${b.bagLb} lb bags), ${b.method === 'sprinkle' ? 'sprinkled on water' : 'mixed blanket'}, ${n0(r.need.area)} ft² at ${r.need.rateAdj.toFixed(2)} lb/ft²`,
+      cost: r.need.costBags ?? (r.need.costBulk != null ? Math.round(r.need.costBulk) : ''),
+    });
+  });
+}
+
+/* ------------------------ bentonite tank sealing ------------------------- */
+const BENT_DEFAULTS = { point: '', shape: 'round', diameter: '', length: '', width: '', surfaceAcres: '', depth: 8, slope: 3, soil: 'loam', method: 'mixed', rate: '', scope: 'whole', partialSqft: '', margin: 25, bagLb: 50, bagPrice: '', tonPrice: '' };
+const bentoniteState = () => ({ ...BENT_DEFAULTS, ...(db.settings().bentonite || {}) });
+function bentoniteResult(b) {
+  const geo = C.tankGeometry({ shape: b.shape, diameter: b.diameter, length: b.length, width: b.width, surfaceSqft: Number(b.surfaceAcres) * 43560, depth: b.depth, slope: b.slope });
+  const soil = C.BENTONITE_SOILS.find((x) => x.key === b.soil) || C.BENTONITE_SOILS[1];
+  const tableRate = b.method === 'sprinkle' ? soil.sprinkle : soil.mixed;
+  const rate = b.rate !== '' && b.rate != null && Number(b.rate) > 0 ? Number(b.rate) : tableRate;
+  const area = b.scope === 'partial' ? Number(b.partialSqft) : geo?.wetted;
+  const need = C.bentoniteNeed({ area, rate, depth: geo?.depth ?? b.depth, margin: Number(b.margin) / 100, bagLb: b.bagLb, bagPrice: b.bagPrice, tonPrice: b.tonPrice });
+  return { geo, soil, tableRate, rate, need };
+}
+function bentonitePanel() {
+  const b = bentoniteState();
+  const { geo, soil, tableRate, need } = bentoniteResult(b);
+  const tanks = db.all('waterpoints').filter((w) => ['tank', 'guzzler', 'storage'].includes(w.type) || !w.type);
+  const inp = (k, label, extra = '', help = '') => `<label class="field">${label}<input type="number" inputmode="decimal" step="any" data-set="bentonite.${k}" value="${esc(b[k] ?? '')}" ${extra}>${help ? `<small class="help">${help}</small>` : ''}</label>`;
+  const sel = (k, label, opts) => `<label class="field">${label}<select data-set="bentonite.${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(b[k]) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  const f = (x) => n0(x);
+  return `
+    <section class="panel" id="bentonite">
+      <div class="panel-head"><h2>Seal a leaking tank with bentonite</h2>${need ? pill(`${f(need.lbs)} lb`, 'good') : ''}</div>
+      <p class="note">Sodium bentonite swells to many times its dry size when wet and plugs the pores in a tank bottom. How much you need depends on the soil, the method and how much of the tank you treat.</p>
+      <div class="form-grid">
+        ${tanks.length ? sel('point', 'Tank', [['', '(not saved to a tank)'], ...tanks.map((w) => [w.id, w.name])]) : ''}
+        ${sel('shape', 'Shape at the full-water line', [['round', 'Round'], ['rect', 'Rectangular'], ['area', 'I know the surface area']])}
+        ${b.shape === 'round' ? inp('diameter', 'Diameter (ft)') : ''}
+        ${b.shape === 'rect' ? inp('length', 'Length (ft)') + inp('width', 'Width (ft)') : ''}
+        ${b.shape === 'area' ? inp('surfaceAcres', 'Surface area (acres)', '', 'Tip: outline the tank on the Map to measure it.') : ''}
+        ${inp('depth', 'Deepest point when full (ft)')}
+        ${inp('slope', 'Side slope (ft across per 1 ft down)', '', '3 is typical for a dozer-built tank (3:1).')}
+        ${sel('soil', 'Soil in the tank bottom', C.BENTONITE_SOILS.map((x) => [x.key, `${x.label} (${x.range} lb/ft²)`]))}
+        ${sel('method', 'Method', [['mixed', 'Mixed in (tank dry), best'], ['sprinkle', 'Sprinkled on water (tank full)']])}
+        ${sel('scope', 'Area to treat', [['whole', 'Whole tank: bottom + sides to the full line'], ['partial', 'Just the leaking area']])}
+        ${b.scope === 'partial' ? inp('partialSqft', 'Leaking area (ft²)', '', 'e.g. a 40 × 60 ft strip on the dam face = 2,400.') : ''}
+        ${inp('rate', 'Rate (lb/ft²)', `placeholder="${tableRate} from the table"`, 'Leave blank to use the table rate for your soil.')}
+        ${inp('margin', 'Extra for uneven spreading (%)', '', 'Texas A&M suggests 25–50%.')}
+        ${inp('bagLb', 'Bag size (lb)')}
+        ${inp('bagPrice', 'Price per bag ($)')}
+        ${inp('tonPrice', 'Bulk price per ton ($)')}
+      </div>
+      ${geo ? `<div class="stats" style="margin-top:14px">
+        ${stat('Water surface', `${f(geo.surface)} ft²`, `${(geo.surface / 43560).toFixed(2)} ac`)}
+        ${stat('Bottom + sides', `${f(geo.wetted)} ft²`, `${f(geo.bottom)} bottom · ${f(geo.sides)} sides`)}
+        ${stat('Holds when full', `${f(geo.gallons)} gal`, `${geo.acreFeet.toFixed(2)} acre-ft${geo.depth < Number(b.depth) - 0.01 ? ` · sides meet at ${geo.depth.toFixed(1)} ft` : ''}`)}
+      </div>` : '<p class="empty">Enter the tank size to calculate.</p>'}
+      ${need ? `<div class="stats" style="margin-top:10px">
+        ${stat('Bentonite', `${f(need.lbs)} lb`, `${need.tons.toFixed(1)} tons`, 'accent')}
+        ${stat(`${b.bagLb}-lb bags`, f(need.bags), `or ${need.sacks} one-ton bulk sacks`)}
+        ${stat('Rate used', `${need.rateAdj.toFixed(2)} lb/ft²`, `${need.baseRate} base${need.depthAdd ? ` + ${need.depthAdd.toFixed(2)} for depth` : ''} + ${b.margin}%`)}
+        ${need.costBags != null || need.costBulk != null ? stat('Cost', need.costBags != null ? usd(need.costBags) : usd(need.costBulk), need.costBags != null && need.costBulk != null ? `bulk: ${usd(need.costBulk)}` : need.costBags != null ? 'in bags' : 'bulk') : ''}
+      </div>
+      <h3>How to spread it</h3>
+      ${b.method === 'sprinkle' ? `<ol class="steps">
+        <li>Use <b>granular</b> bentonite (not powder) so it sinks before it swells.</li>
+        <li>Broadcast it evenly over the water above the leak, from a boat or the bank. That's about <b>${f(need.perSquare)} lb (${need.bagsPerSquare.toFixed(1)} bags) per 10 × 10 ft</b> of water surface.</li>
+        <li>Concentrate on the leak zone (often the dam face, or rock outcrops). Uniform coverage is hard, so expect to repeat.</li>
+        <li>This is the least reliable method. If the tank goes dry in a drought, reseal it by the mixed-blanket method.</li>
+      </ol>` : `<ol class="steps">
+        <li>Drain the tank, or wait for a dry spell, and let the bottom dry. Clear brush and roots, and fill cracks, holes and crawfish burrows.</li>
+        <li>Stake out 10 × 10 ft squares with flags or string. Spread <b>${f(need.perSquare)} lb (${need.bagsPerSquare.toFixed(1)} bags) per square</b>.</li>
+        <li>Disk or till it into the top 4–6 inches. Blend it in; don't leave it sitting on top.</li>
+        <li>Wet it lightly and compact with several passes of a sheepsfoot roller or loaded tractor tires. A seal is only as good as its compaction.</li>
+        <li>Let it fill slowly, and keep cattle off the treated slopes until it's full. Hoof punctures break the seal, so a trough fed from the tank helps.</li>
+      </ol>`}
+      <div class="head-actions"><button class="btn primary" data-bent-log>Log this job under maintenance</button></div>` : ''}
+      <details class="lines"><summary>About these numbers</summary>
+        <ul class="plain small" style="margin-top:8px">
+          <li>• The rates are starting points from commonly cited ranges (${C.BENTONITE_SOILS.map((x) => `${x.label.split(' /')[0].toLowerCase()} ${x.range}`).join(', ')} lb/ft², mixed method). Suppliers add about 1 lb/ft² for every 8 ft of water beyond 8 ft, and the calculator does too.</li>
+          <li>• Before buying tons of it, the Texas A&M method is to try a trial rate (for example ½ lb/ft²) on a test plot. Increase until it holds, then add 25–50%.</li>
+          <li>• Leaks through <b>fractured limestone</b>, common in the Hill Country, may be too large for bentonite. Ask NRCS (practice 521) or a pond contractor about a compacted clay liner or a synthetic liner. NRCS can cost-share it through EQIP.</li>
+          <li>• Area includes the side slopes up to the full-water line, which is usually 20–40% more than the water surface.</li>
+        </ul>
+      </details>
+    </section>`;
 }
 
 /* --------------------------------- brush --------------------------------- */
