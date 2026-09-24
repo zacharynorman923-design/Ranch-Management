@@ -60,12 +60,16 @@ jobs:
           test -n "$ID" || { echo "::error::Could not find or create the ranch-relay D1 database"; exit 1; }
           sed -i "s/REPLACE_WITH_D1_DATABASE_ID/$ID/" wrangler.toml
 
-      - name: Apply ranch location (optional repository variables)
+      - name: Apply ranch location and classifier settings (optional repository variables)
         if: steps.cfg.outputs.ready == 'true'
         env:
           RANCH_LAT: ${{ vars.RANCH_LAT }}
           RANCH_LON: ${{ vars.RANCH_LON }}
+          CLASSIFIER_MODEL: ${{ vars.CLASSIFIER_MODEL }}
+          CLASSIFY_DAILY_LIMIT: ${{ vars.CLASSIFY_DAILY_LIMIT }}
         run: |
+          if [ -n "$CLASSIFIER_MODEL" ]; then sed -i "s/^CLASSIFIER_MODEL = \"[^\"]*\"/CLASSIFIER_MODEL = \"$CLASSIFIER_MODEL\"/" wrangler.toml; fi
+          if [ -n "$CLASSIFY_DAILY_LIMIT" ]; then sed -i "s/^CLASSIFY_DAILY_LIMIT = \"[^\"]*\"/CLASSIFY_DAILY_LIMIT = \"$CLASSIFY_DAILY_LIMIT\"/" wrangler.toml; fi
           if [ -n "$RANCH_LAT" ]; then sed -i "s/^RANCH_LAT = .*/RANCH_LAT = \"$RANCH_LAT\"/" wrangler.toml; fi
           if [ -n "$RANCH_LON" ]; then sed -i "s/^RANCH_LON = .*/RANCH_LON = \"$RANCH_LON\"/" wrangler.toml; fi
 
@@ -85,10 +89,11 @@ jobs:
           TACTACAM_PASSWORD: ${{ secrets.TACTACAM_PASSWORD }}
           AMBIENT_API_KEY: ${{ secrets.AMBIENT_API_KEY }}
           AMBIENT_APPLICATION_KEY: ${{ secrets.AMBIENT_APPLICATION_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           test -n "$RELAY_TOKEN" || { echo "::error::Add a RELAY_TOKEN repository secret (any long random string) — the app needs it to talk to the relay."; exit 1; }
           # Only non-empty values; written to a temp file that is never printed.
-          node -e 'const k=["RELAY_TOKEN","TACTACAM_EMAIL","TACTACAM_PASSWORD","AMBIENT_API_KEY","AMBIENT_APPLICATION_KEY"];const o={};for(const x of k)if(process.env[x])o[x]=process.env[x];require("fs").writeFileSync(process.env.RUNNER_TEMP+"/s.json",JSON.stringify(o))'
+          node -e 'const k=["RELAY_TOKEN","TACTACAM_EMAIL","TACTACAM_PASSWORD","AMBIENT_API_KEY","AMBIENT_APPLICATION_KEY","ANTHROPIC_API_KEY"];const o={};for(const x of k)if(process.env[x])o[x]=process.env[x];require("fs").writeFileSync(process.env.RUNNER_TEMP+"/s.json",JSON.stringify(o))'
           npx wrangler secret bulk "$RUNNER_TEMP/s.json"
           rm -f "$RUNNER_TEMP/s.json"
           echo "::notice::Relay deployed. Its address is the workers.dev URL printed in the 'Deploy the Worker' step. Paste it into the app under Settings → Automatic data."

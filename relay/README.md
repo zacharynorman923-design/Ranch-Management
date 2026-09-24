@@ -107,6 +107,41 @@ In the installed app, go to **☰ → Settings → Automatic data (relay)**:
 After this you never touch it again. The relay runs by itself, and the app
 syncs whenever it has signal.
 
+## Photo labeling (optional)
+
+When the relay has an Anthropic API key, it labels each new camera photo with
+Claude. The labels cover species, how many animals, buck/doe/fawn, rough antler
+points on clear bucks, and **people or vehicles** (a trespass alert for an
+absentee owner). Labels show up in the app's photo log as 🤖 notes with a
+**✓ Keep** button. Empty frames (wind, grass) are hidden and cleaned off the
+phone after 3 days. The Cams & feeders page gets a 30-day activity table,
+including what share of buck photos came in daylight.
+
+**Setup**
+1. Create an account at <https://console.anthropic.com>, add a payment method
+   under *Billing*, and create a key under *API Keys*.
+2. Add it as the repository secret `ANTHROPIC_API_KEY`
+   (Settings → Secrets and variables → Actions).
+3. Actions → **Deploy relay** → **Run workflow**.
+
+**Cost.** You pay Anthropic per photo. At about 2,000 tokens per photo, rough
+figures are:
+
+| Model | Per photo | 50 photos/day | Cap: 150 photos/day |
+| --- | --- | --- | --- |
+| `claude-opus-5` (default, most accurate) | ~1.5–2¢ | ~$25–30/mo | ~$90/mo max |
+| `claude-haiku-4-5` | ~0.3¢ | ~$5/mo | ~$14/mo max |
+
+- **Switch models** with a repository **variable** (not a secret):
+  `CLASSIFIER_MODEL` = `claude-haiku-4-5`. Then redeploy.
+- **Change the cap** with a `CLASSIFY_DAILY_LIMIT` variable (default 150).
+  Photos over the cap are skipped for that day.
+- **Set a monthly spend limit** in the Anthropic console too, as a second
+  guardrail.
+
+Labels are a first pass. They can mis-sex a doe at night or miss an animal at
+the edge of the frame, and a correction you tap in the app always wins.
+
 ## Adding a rain gauge later
 1. Get an **Ambient Weather** station that reports to AmbientWeather.net (see
    the recommendation below).
@@ -150,6 +185,7 @@ All endpoints require `Authorization: Bearer <RELAY_TOKEN>`.
 | `GET /cameras` | `[{id, name, battery, signal, lat, lon, last_photo}]` |
 | `GET /photos?after=SEQ` | up to 50 photo records after a cursor |
 | `GET /photo/:id` | the JPEG |
+| `GET /labels?since=ISO` | AI labels finished since a time |
 | `POST /run` | poll every source now |
 
 Local development: `cd relay && npm install && npx wrangler d1 execute

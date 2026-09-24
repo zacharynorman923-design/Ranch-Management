@@ -105,7 +105,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -154,4 +154,91 @@ test('app rain import: one auto record per day, hand-logged days win', async () 
   const p = planRainImport(rows, existing);
   assert.deepEqual(p.del, ['auto-rain-2026-09-02']);
   assert.deepEqual(p.put.map((r) => [r.date, r.inches, r.gauge]), [['2026-09-01', 0.5, AUTO_EST], ['2026-09-04', 0.75, AUTO_GAUGE]]);
+});
+
+/* ---------------------------- photo classifier ---------------------------- */
+test('classifier labels new photos, respects the daily cap, and the app gets tags', { timeout: 30000 }, async (t) => {
+  const log = [];
+  const sent = [];
+  const base = fakeNet(log);
+  const realFetch = globalThis.fetch;
+  let reply = { empty: false, animals: [{ species: 'white-tailed deer', count: 1, sex: 'buck', antler_points: 8 }, { species: 'white-tailed deer', count: 2, sex: 'doe', antler_points: 0 }], summary: 'An 8-point buck and 2 does', confidence: 'high' };
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url instanceof Request ? url.url : url);
+    if (u.startsWith('https://api.anthropic.com/')) {
+      const req = url instanceof Request ? url : new Request(u, opts);
+      sent.push({ url: u, headers: Object.fromEntries(req.headers), body: JSON.parse(await req.text()) });
+      return new Response(JSON.stringify({
+        id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+        content: [{ type: 'text', text: JSON.stringify(reply) }], usage: { input_tokens: 1600, output_tokens: 80 },
+      }), { headers: { 'content-type': 'application/json' } });
+    }
+    return base(url, opts);
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { ...env0(), ANTHROPIC_API_KEY: 'sk-test', CLASSIFY_DAILY_LIMIT: '3' };
+
+  const run = await (await call(env, '/run', { method: 'POST' })).json();
+  assert.equal(run.labels.ok, true, JSON.stringify(run.labels));
+  assert.equal(run.labels.labeled, 2);
+  const first = sent[0];
+  assert.equal(first.body.model, 'claude-opus-5');
+  assert.equal(first.body.output_config.effort, 'low');
+  assert.equal(first.body.output_config.format.type, 'json_schema');
+  assert.equal(first.body.fallbacks, 'default');
+  assert.match(first.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
+  assert.equal(first.headers['x-api-key'], 'sk-test');
+  assert.deepEqual(first.body.messages[0].content[0].source, { type: 'url', url: 'https://s3.test/p2.jpg' });
+
+  const photos = await (await call(env, '/photos?after=0')).json();
+  assert.equal(photos.find((p) => p.id === 'p2').ai_tags, 'buck, doe');
+  assert.equal(photos.find((p) => p.id === 'p2').ai_summary, 'An 8-point buck and 2 does');
+  const labels = await (await call(env, '/labels?since=1970-01-01')).json();
+  assert.equal(labels.length, 2);
+  assert.equal(labels[0].labels.animals[0].antler_points, 8);
+
+  // A failed URL fetch retries with our stored copy (base64); the cap (3/day) stops the rest.
+  env.DB.prepare("UPDATE photo_labels SET status = 'error', attempts = 1 WHERE id = 'p1'");
+  await env.DB.prepare("UPDATE photo_labels SET status = 'error', attempts = 1 WHERE id = 'p1'").run();
+  reply = { empty: true, animals: [], summary: 'Nothing, grass moving', confidence: 'medium' };
+  sent.length = 0;
+  const again = await (await call(env, '/run', { method: 'POST' })).json();
+  assert.equal(again.labels.labeled, 1);
+  assert.equal(sent[0].body.messages[0].content[0].source.type, 'base64');
+  assert.equal(sent[0].body.messages[0].content[0].source.data.length, Math.ceil(JPEG.length / 3) * 4);
+  const capped = await (await call(env, '/run', { method: 'POST' })).json();
+  assert.equal(capped.labels.capped, true);
+
+  const st = await (await call(env, '/status')).json();
+  assert.equal(st.sources.classifier, 'claude-opus-5');
+});
+
+test('classifier: Haiku gets no effort/fallbacks; no key means skipped', { timeout: 30000 }, async (t) => {
+  const sent = [];
+  const base = fakeNet([]);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url instanceof Request ? url.url : url);
+    if (u.startsWith('https://api.anthropic.com/')) {
+      const req = url instanceof Request ? url : new Request(u, opts);
+      sent.push({ headers: Object.fromEntries(req.headers), body: JSON.parse(await req.text()) });
+      return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-haiku-4-5', stop_reason: 'end_turn', stop_sequence: null,
+        content: [{ type: 'text', text: '{"empty":false,"animals":[{"species":"feral hog","count":5,"sex":"unknown","antler_points":0},{"species":"person","count":1,"sex":"unknown","antler_points":0}],"summary":"5 hogs and a person","confidence":"high"}' }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+    }
+    return base(url, opts);
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const run = await (await call({ ...env0(), ANTHROPIC_API_KEY: 'k', CLASSIFIER_MODEL: 'claude-haiku-4-5' }, '/run', { method: 'POST' })).json();
+  assert.equal(run.labels.labeled, 2);
+  assert.equal(sent[0].body.output_config.effort, undefined);
+  assert.equal(sent[0].body.fallbacks, undefined);
+  assert.ok(!String(sent[0].headers['anthropic-beta'] || '').includes('fallback'));
+  const none = await (await call(env0(), '/run', { method: 'POST' })).json();
+  assert.match(none.labels.skipped, /ANTHROPIC_API_KEY/);
+});
+
+test('classifier tags', () => {
+  assert.deepEqual(L.tagsFromLabels({ empty: true, animals: [] }), ['empty']);
+  assert.deepEqual(L.tagsFromLabels({ empty: false, animals: [{ species: 'coyote' }, { species: 'feral hog' }, { species: 'white-tailed deer', sex: 'fawn' }, { species: 'axis deer' }] }), ['coyote', 'predator', 'hog', 'fawn', 'exotic']);
+  assert.equal(L.toBase64(new TextEncoder().encode('hello')), 'aGVsbG8=');
 });

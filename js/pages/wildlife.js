@@ -121,6 +121,7 @@ export function devices() {
       <p class="note">Tactacam Reveal cameras appear here on their own once the <a href="#/settings">relay</a> is set up. Battery, signal and photos update every 15 minutes.</p>
       <p class="note warn">Feeders are bait for doves. Turn off and clean up around any feeder near a dove field at least 10 days before you hunt it — see the <a href="#/dove">dove planner</a>.</p>
     </section>
+    ${activityPanel()}
     ${listPanel('devices')}
     ${listPanel('devicelog', { title: 'Service log', note: 'Feeder refills here also count as “supplemental food” evidence for the wildlife valuation.' })}`;
 }
@@ -135,6 +136,35 @@ export function bindDevices(el) {
     await db.put('devices', { ...d, [action === 'refill' ? 'refillDate' : 'batteryDate']: t });
     toast(`${d.name}: ${action === 'refill' ? 'filled' : 'batteries changed'}`);
   }));
+}
+
+/* What the cameras saw in the last 30 days, from the automatic photo labels. */
+const ACTIVITY_TAGS = ['buck', 'doe', 'fawn', 'hog', 'predator', 'turkey', 'exotic', 'person'];
+function activityPanel() {
+  const since = C.addDays(C.today(), -30);
+  const photos = db.all('photos').filter((p) => p.aiTags && p.aiTags !== 'empty' && p.date >= since);
+  if (!photos.length) return '';
+  const byCam = new Map();
+  const buckHours = Array(24).fill(0);
+  for (const p of photos) {
+    const tags = String(p.aiTags).split(',').map((x) => x.trim());
+    const cam = db.get('devices', p.device)?.name || 'Other';
+    const row = byCam.get(cam) || Object.fromEntries(ACTIVITY_TAGS.map((t) => [t, 0]));
+    for (const t of tags) if (t in row) row[t]++;
+    byCam.set(cam, row);
+    if (tags.includes('buck') && p.time) buckHours[Number(p.time.slice(0, 2))]++;
+  }
+  const cols = ACTIVITY_TAGS.filter((t) => [...byCam.values()].some((r) => r[t]));
+  const bucks = buckHours.reduce((a, b) => a + b, 0);
+  const light = buckHours.slice(7, 19).reduce((a, b) => a + b, 0);
+  const peak = buckHours.indexOf(Math.max(...buckHours));
+  return `<section class="panel">
+    <div class="panel-head"><h2>Camera activity · last 30 days</h2>${pill('🤖 auto-labeled')}</div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Camera</th>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
+      ${[...byCam.entries()].map(([cam, r]) => `<tr><td>${esc(cam)}</td>${cols.map((c) => `<td class="num ${c === 'person' && r[c] ? 'bad-t' : ''}">${r[c] || ''}</td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <p class="note">Counts are photos, not individual animals. The same buck on three triggers counts three times.${bucks ? ` Buck photos: ${bucks}, ${Math.round((light / bucks) * 100)}% in daylight (7 am–7 pm), busiest around ${peak % 12 || 12} ${peak < 12 ? 'am' : 'pm'}.` : ''}</p>
+  </section>`;
 }
 
 /* --------------------------------- dove ---------------------------------- */

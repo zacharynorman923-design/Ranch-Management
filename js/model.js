@@ -83,6 +83,13 @@ export function alerts(asOf = C.today()) {
     if (last == null || last > 2) push('warn', `Relay hasn't synced ${last == null ? 'yet' : `in ${last} days`}. Open the app with signal`, '#/settings', -5);
     for (const e of s.relayLastResult?.errors || []) push('warn', `Relay: ${e}`, '#/settings', -4);
   }
+  // Trespass: a person or vehicle on a camera in the last 7 days.
+  const weekAgo = C.addDays(asOf, -7);
+  for (const p of db.all('photos')) {
+    if (!p.aiTags || !p.date || p.date < weekAgo) continue;
+    const hit = String(p.aiTags).split(',').map((x) => x.trim()).filter((x) => x === 'person' || x === 'vehicle');
+    if (hit.length && !String(p.tags || '').split(',').map((x) => x.trim().toLowerCase()).includes('ok')) push('bad', `${hit.join(' & ')} on ${db.get('devices', p.device)?.name || 'a camera'}, ${p.date}${p.time ? ' ' + p.time : ''}. Check the photo (tag it "ok" if it was you)`, '#/photos?tag=person', -60);
+  }
   for (const d of db.all('devices')) {
     if (d.batteryPct !== '' && d.batteryPct != null && Number(d.batteryPct) < 25) push(Number(d.batteryPct) < 10 ? 'bad' : 'warn', `${d.name}: battery ${Math.round(d.batteryPct)}%`, '#/devices', Number(d.batteryPct) - 50);
     if (d.lastPhoto && d.revealId) {

@@ -92,6 +92,7 @@ export async function pollTactacam(env) {
         env.DB.prepare(`INSERT OR IGNORE INTO photos (id, camera_id, camera, taken, lat, lon, temp, moon, battery, signal, bytes, chunks, fetched_at)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`)
           .bind(m.id, m.cameraId, m.camera, m.taken, m.lat, m.lon, m.temp, m.moon, m.battery, m.signal, bytes.length, parts.length, now),
+        env.DB.prepare(`INSERT OR IGNORE INTO photo_labels (id, url, status, updated) VALUES (?1, ?2, 'pending', ?3)`).bind(m.id, m.url, now),
       ]);
       added++;
       if (added >= MAX_NEW) break outer;
@@ -117,6 +118,7 @@ export async function prunePhotos(env) {
   const cutoff = new Date(Date.now() - keep * 86400000).toISOString();
   await env.DB.batch([
     env.DB.prepare('DELETE FROM photo_chunks WHERE id IN (SELECT id FROM photos WHERE fetched_at < ?1)').bind(cutoff),
+    env.DB.prepare('DELETE FROM photo_labels WHERE id IN (SELECT id FROM photos WHERE fetched_at < ?1)').bind(cutoff),
     env.DB.prepare('DELETE FROM photos WHERE fetched_at < ?1').bind(cutoff),
   ]);
 }

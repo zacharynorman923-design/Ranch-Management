@@ -79,3 +79,65 @@ export function safeEqual(a, b) {
   for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   return diff === 0 && a.length > 0;
 }
+
+/* ------------------------------ classifier ------------------------------- */
+export const SPECIES = [
+  'white-tailed deer', 'axis deer', 'fallow deer', 'other exotic deer', 'feral hog', 'wild turkey',
+  'coyote', 'bobcat', 'mountain lion', 'gray fox', 'raccoon', 'skunk', 'armadillo', 'opossum',
+  'rabbit', 'dove', 'quail', 'other bird', 'cattle', 'goat', 'sheep', 'horse', 'dog', 'cat',
+  'person', 'vehicle', 'other',
+];
+
+/** JSON schema the model must answer in (structured outputs). */
+export const LABEL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['empty', 'animals', 'summary', 'confidence'],
+  properties: {
+    empty: { type: 'boolean', description: 'True when no animal, person or vehicle is visible (e.g. wind-blown grass).' },
+    animals: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['species', 'count', 'sex', 'antler_points'],
+        properties: {
+          species: { type: 'string', enum: SPECIES },
+          count: { type: 'integer', description: 'Individuals of this species/sex visible.' },
+          sex: { type: 'string', enum: ['buck', 'doe', 'fawn', 'male', 'female', 'young', 'unknown'], description: 'For deer use buck/doe/fawn; otherwise male/female/young/unknown.' },
+          antler_points: { type: 'integer', description: 'Best estimate of total antler points for a buck when clearly visible, else 0.' },
+        },
+      },
+    },
+    summary: { type: 'string', description: 'One short line a rancher would write in a log, e.g. "2 does and a fawn at the feeder".' },
+    confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+  },
+};
+
+const PREDATORS = new Set(['coyote', 'bobcat', 'mountain lion', 'gray fox']);
+const EXOTICS = new Set(['axis deer', 'fallow deer', 'other exotic deer']);
+/** Short tags for the app's photo log from a classifier result. */
+export function tagsFromLabels(l) {
+  if (!l || l.empty || !Array.isArray(l.animals) || !l.animals.length) return ['empty'];
+  const t = new Set();
+  for (const a of l.animals) {
+    const s = a.species;
+    if (s === 'white-tailed deer') t.add(['buck', 'doe', 'fawn'].includes(a.sex) ? a.sex : 'deer');
+    else if (s === 'feral hog') t.add('hog');
+    else if (s === 'wild turkey') t.add('turkey');
+    else if (PREDATORS.has(s)) { t.add(s === 'mountain lion' ? 'lion' : s.replace('gray ', '')); t.add('predator'); }
+    else if (EXOTICS.has(s)) t.add('exotic');
+    else if (s === 'person' || s === 'vehicle') t.add(s);
+    else if (['dove', 'quail', 'other bird'].includes(s)) t.add(s === 'other bird' ? 'bird' : s);
+    else t.add(s);
+  }
+  return [...t];
+}
+
+/** bytes → base64 without blowing the call stack on large images. */
+export function toBase64(bytes) {
+  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}

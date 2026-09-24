@@ -128,7 +128,10 @@ phone is off:
 
 The app pulls from the relay whenever it has signal. Cameras appear under
 Cams & feeders with battery and last-photo alerts. Photos land in the photo
-log with one-tap tags, and rain fills the log marked *(auto)*. A reading you
+log with one-tap tags, and rain fills the log marked *(auto)*.
+With an Anthropic API key, the relay also **labels every photo** with Claude:
+species, counts, buck/doe/fawn and people or vehicles, the last of which
+raises a trespass alert. A reading you
 log by hand always wins over the automatic one. Setup takes about 15 minutes
 in a browser, with no computer needed: see **[relay/README.md](relay/README.md)**.
 
