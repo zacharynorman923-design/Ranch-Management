@@ -4,6 +4,7 @@ import * as C from '../calc.js';
 import { S } from '../model.js';
 import { esc, n0, n1, usd, stat, pill, listPanel, dateLabel, daysLabel, toast, openForm } from '../ui.js';
 import { parseMapFile, ringsOf, ringAcres, distance, toGeoJSON } from '../geo.js';
+import { BASEMAPS, MASON, loadLeaflet, boundaryRings } from '../mapcore.js';
 export { ringsOf };
 
 
@@ -208,34 +209,10 @@ const LAYERS = [
   { col: 'pastures', label: 'Pastures', color: '#65A30D', name: (r) => r.name },
   { col: 'photos', label: 'Photos', color: '#E11D48', name: (r) => r.caption || r.date },
 ];
-const BASEMAPS = {
-  aerial: { label: 'Aerial', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts: { maxNativeZoom: 19, maxZoom: 20, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics' } },
-  usgs: { label: 'Aerial (USGS)', url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}', opts: { maxNativeZoom: 16, maxZoom: 20, attribution: 'USGS The National Map' } },
-  topo: { label: 'Topo', url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', opts: { maxNativeZoom: 16, maxZoom: 20, attribution: 'USGS The National Map' } },
-  streets: { label: 'Roads', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', opts: { maxNativeZoom: 19, maxZoom: 20, attribution: '© OpenStreetMap contributors' } },
-};
-const MASON = [30.7488, -99.2303];
 
 /* Survives re-renders (the page redraws whenever data syncs). */
 const M = { hidden: new Set(['photos']), view: null, mode: null, target: 'boundary', pts: [], watch: null, wake: null, acc: null, map: null };
 
-let leafletP = null;
-function loadLeaflet() {
-  if (window.L) return Promise.resolve(window.L);
-  leafletP ||= new Promise((resolve, reject) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet'; css.href = 'vendor/leaflet/leaflet.css';
-    document.head.appendChild(css);
-    const js = document.createElement('script');
-    js.src = 'vendor/leaflet/leaflet.js';
-    js.onload = () => resolve(window.L);
-    js.onerror = () => { leafletP = null; reject(new Error('map library failed to load')); };
-    document.head.appendChild(js);
-  });
-  return leafletP;
-}
-
-const boundaryRings = () => ringsOf(db.settings().boundary).filter((r) => r.length >= 3);
 const shapeRings = (p) => ringsOf(p.shape).filter((r) => r.length >= 3);
 const targetName = (t) => (t === 'boundary' ? 'property boundary' : `${db.get('pastures', t)?.name || 'pasture'} outline`);
 const lineMiles = (pts) => pts.slice(1).reduce((s, p, i) => s + distance(pts[i], p), 0) / 1609.344;
@@ -245,7 +222,7 @@ export function map() {
   const rings = boundaryRings();
   const acres = rings.reduce((t, r) => t + ringAcres(r), 0);
   const pastures = db.all('pastures').sort((a, b) => a.name.localeCompare(b.name));
-  const drawing = M.mode === 'draw' || M.mode === 'walk';
+  const drawing = M.mode === 'draw' || M.mode === 'walk' || M.mode === 'pin';
   return `
     <section class="panel map-panel">
       <div class="panel-head"><h2>Ranch map</h2>
@@ -260,7 +237,8 @@ export function map() {
           <option value="boundary" ${M.target === 'boundary' ? 'selected' : ''}>Property boundary</option>
           ${pastures.map((p) => `<option value="${esc(p.id)}" ${M.target === p.id ? 'selected' : ''}>Pasture: ${esc(p.name)}</option>`).join('')}
         </select></label>
-        <button class="btn primary" data-map-draw>✏️ Tap corners</button>
+        <button class="btn primary" data-map-pin>📌 Drop pin</button>
+        <button class="btn" data-map-draw>✏️ Tap corners</button>
         <button class="btn" data-map-walk>🚶 Drive / walk the fence</button>
         <label class="btn">📂 Import file<input type="file" data-map-file hidden></label>
         ${(M.target === 'boundary' ? rings.length : shapeRings(db.get('pastures', M.target) || {}).length) ? '<button class="btn danger" data-map-clear>Clear</button>' : ''}
@@ -305,6 +283,7 @@ export async function bindMap(el, rerender) {
     e.target.value = '';
   });
   el.querySelector('[data-map-draw]')?.addEventListener('click', () => { M.mode = 'draw'; M.pts = []; rerender(); });
+  el.querySelector('[data-map-pin]')?.addEventListener('click', () => { M.mode = 'pin'; rerender(); });
   el.querySelector('[data-map-walk]')?.addEventListener('click', () => startWalk(rerender));
 
   let L;
@@ -364,6 +343,12 @@ export async function bindMap(el, rerender) {
     else if (ll.length) L.circleMarker(ll[ll.length - 1], { radius: 7, color: '#fff', weight: 2, fillColor: '#2563EB', fillOpacity: 1 }).addTo(draft);
     if (!status) return;
     const ac = M.pts.length >= 3 ? `${n1(ringAcres(M.pts))} ac` : '—';
+    if (M.mode === 'pin') {
+      status.innerHTML = `<b>📌 Tap the map where it goes.</b> Zoom in for a precise spot. You'll then pick what to add, or move an existing record there.
+        <div class="map-status-actions"><button class="btn" data-map-cancel>Done</button></div>`;
+      status.querySelector('[data-map-cancel]').addEventListener('click', () => { M.mode = null; rerender(); });
+      return;
+    }
     status.innerHTML = M.mode === 'walk'
       ? `<b>Recording ${esc(targetName(M.target))}</b> · ${M.pts.length} points · ${lineMiles(M.pts).toFixed(2)} mi · ${ac}${M.acc ? ` · GPS ±${Math.round(M.acc)} m` : ''}
          <div class="map-status-actions"><button class="btn" data-map-cancel>Cancel</button><button class="btn primary" data-map-stop>Stop &amp; review</button></div>
@@ -380,7 +365,7 @@ export async function bindMap(el, rerender) {
     });
   };
   M.redraw = redraw;
-  map.on('click', (e) => { if (M.mode === 'draw') { M.pts.push([+e.latlng.lng.toFixed(6), +e.latlng.lat.toFixed(6)]); redraw(); } });
+  map.on('click', (e) => { if (M.mode === 'pin') { pinChooser(+e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6)); return; } if (M.mode === 'draw') { M.pts.push([+e.latlng.lng.toFixed(6), +e.latlng.lat.toFixed(6)]); redraw(); } });
   redraw();
 
   el.querySelector('[data-map-me]')?.addEventListener('click', () => {
@@ -430,4 +415,44 @@ function stopWalk() {
   M.watch = null;
   M.wake?.release?.().catch(() => {});
   M.wake = null;
+}
+
+/* ---------------------------- drop a pin ---------------------------------- */
+const PIN_TYPES = [
+  ['waterpoints', '💧 Water point'], ['devices', '📷 Camera / feeder'], ['fences', '🚪 Gate / fence'],
+  ['brush', '🌳 Brush treatment'], ['dovefields', '🕊 Dove field'], ['pastures', '🌾 Pasture'],
+];
+function pinChooser(lat, lon) {
+  const loc = { lat, lon };
+  const existing = PIN_TYPES.map(([col, label]) => ({ col, label, rows: db.all(col).sort((a, b) => String(LAYERS.find((x) => x.col === col).name(a)).localeCompare(String(LAYERS.find((x) => x.col === col).name(b)))) }))
+    .filter((g) => g.rows.length);
+  const dlg = document.createElement('dialog');
+  dlg.className = 'sheet';
+  dlg.innerHTML = `<div class="sheet-form">
+    <header class="sheet-head"><h2>What's here?</h2><button type="button" class="icon-btn" data-x aria-label="Close">✕</button></header>
+    <div class="sheet-body pin-body">
+      <p class="small muted wide">${lat.toFixed(5)}, ${lon.toFixed(5)}</p>
+      <div class="pin-grid wide">${PIN_TYPES.map(([col, label]) => `<button type="button" class="btn" data-new="${col}">＋ ${label}</button>`).join('')}</div>
+      ${existing.length ? `<label class="field wide">…or move an existing record here
+        <select data-move><option value="">Choose…</option>${existing.map((g) => `<optgroup label="${esc(g.label.replace(/^\S+ /, ''))}">${g.rows.map((r) => `<option value="${g.col}:${esc(r.id)}">${esc(LAYERS.find((x) => x.col === g.col).name(r))}${r.loc?.lat ? ' (has a pin)' : ''}</option>`).join('')}</optgroup>`).join('')}</select></label>` : ''}
+    </div>
+    <footer class="sheet-foot"><span class="grow"></span><button type="button" class="btn" data-x>Cancel</button></footer>
+  </div>`;
+  document.body.appendChild(dlg);
+  const close = () => { dlg.close(); dlg.remove(); };
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  dlg.addEventListener('click', (e) => {
+    if (e.target.closest('[data-x]')) close();
+    const b = e.target.closest('[data-new]');
+    if (b) { close(); openForm(b.dataset.new, null, { loc }); }
+  });
+  dlg.querySelector('[data-move]')?.addEventListener('change', async (e) => {
+    const [col, id] = e.target.value.split(':');
+    const rec = db.get(col, id);
+    if (!rec) return;
+    close();
+    await db.put(col, { ...rec, loc });
+    toast(`Moved ${LAYERS.find((x) => x.col === col).name(rec)} here`);
+  });
+  dlg.showModal();
 }
