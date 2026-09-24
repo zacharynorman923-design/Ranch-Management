@@ -11,9 +11,11 @@ import * as L from './pages/land.js';
 import * as K from './pages/compliance.js';
 import * as M from './pages/money.js';
 import * as O from './pages/ops.js';
+import { APP_VERSION } from './version.js';
 
 const ROUTES = {
   home: { title: 'Dashboard', group: '', render: dashboard, bind: bindDashboard },
+  settings: { title: 'Settings & backup', group: '', render: O.settings, bind: O.bindSettings },
   stocking: { title: 'Stocking', group: 'Grazing', render: G.stockingPage },
   pastures: { title: 'Pastures', group: 'Grazing', render: G.pastures, bind: G.bindPastures },
   herd: { title: 'Herd', group: 'Grazing', render: G.herd, bind: G.bindHerd },
@@ -34,7 +36,6 @@ const ROUTES = {
   tasks: { title: 'Tasks', group: 'Ops', render: O.tasks, bind: O.bindTasks },
   contacts: { title: 'Contacts', group: 'Ops', render: O.contacts },
   photos: { title: 'Photo log', group: 'Ops', render: O.photos, bind: O.bindPhotos },
-  settings: { title: 'Settings & backup', group: 'Ops', render: O.settings, bind: O.bindSettings },
   packet: { title: 'Year-end packet', group: 'hidden', render: K.packet, bind: K.bindPacket },
 };
 
@@ -52,7 +53,8 @@ function renderNav(active) {
   for (const [k, r] of Object.entries(ROUTES)) if (r.group !== 'hidden') (groups[r.group] ||= []).push([k, r]);
   nav.innerHTML = Object.entries(groups).map(([g, items]) => `
     ${g ? `<div class="nav-group">${esc(g)}</div>` : ''}
-    ${items.map(([k, r]) => `<a href="#/${k}" class="${k === active ? 'on' : ''}">${esc(r.title)}</a>`).join('')}`).join('');
+    ${items.map(([k, r]) => `<a href="#/${k}" class="${k === active ? 'on' : ''}">${k === 'settings' ? '⚙︎ ' : ''}${esc(r.title)}</a>`).join('')}`).join('')
+    + `<div class="nav-version">Version ${APP_VERSION}</div>`;
 }
 
 let rendering = false;
@@ -136,6 +138,7 @@ function dashboard() {
         <button class="btn" data-q="fencelog">🧱 Fence check</button>
         <button class="btn" data-q="ledger">💵 Expense</button>
         <a class="btn" href="#/photos">📷 Photo</a>
+        <a class="btn" href="#/settings">⚙︎ Settings</a>
       </div>
     </section>`;
 }
@@ -173,6 +176,16 @@ async function boot() {
   setInterval(pull, 15 * 60 * 1000);
   window.addEventListener('online', pull);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pull(); });
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // A new version just took over: reload once so its HTML/CSS/JS are used.
+      if (hadController && !reloaded && !document.querySelector('dialog[open]')) { reloaded = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+  }
 }
 boot();
