@@ -544,3 +544,71 @@ export function seasonalTemplate(year, { doveOpener = '09-01', calving = 'spring
   }
   return out.sort((a, b) => (a.date < b.date ? -1 : 1));
 }
+
+/* ------------------------- 12. stock tank sealing ------------------------ */
+/**
+ * Stock-tank geometry at the full-pool waterline. Shapes: 'round' (diameter),
+ * 'rect' (length × width) or 'area' (known surface area, treated as round).
+ * `slope` is the side slope as horizontal run per 1 ft of drop (3 = 3:1).
+ * If the sides meet before `depth`, the tank is a cone/trough and the real
+ * depth is capped where they meet. All results in square feet / gallons.
+ */
+export function tankGeometry({ shape = 'round', diameter, length, width, surfaceSqft, depth, slope = 3 }) {
+  const d = Math.max(0, num(depth)), z = Math.max(0, num(slope, 3));
+  const GAL_PER_FT3 = 7.48052;
+  if (shape === 'rect') {
+    const L = num(length), W = num(width);
+    if (!(L > 0 && W > 0)) return null;
+    const dEff = z > 0 ? Math.min(d, Math.min(L, W) / (2 * z)) : d;
+    const Lb = Math.max(0, L - 2 * z * dEff), Wb = Math.max(0, W - 2 * z * dEff);
+    const h = dEff * Math.sqrt(1 + z * z); // slant height of each side
+    const top = L * W, bottom = Lb * Wb;
+    const sides = (L + Lb) * h + (W + Wb) * h;
+    const mid = ((L + Lb) / 2) * ((W + Wb) / 2);
+    const ft3 = (dEff / 6) * (top + 4 * mid + bottom);
+    return { surface: top, bottom, sides, wetted: bottom + sides, depth: dEff, gallons: ft3 * GAL_PER_FT3, acreFeet: ft3 / 43560 };
+  }
+  const D = shape === 'area' ? 2 * Math.sqrt(num(surfaceSqft) / Math.PI) : num(diameter);
+  if (!(D > 0)) return null;
+  const Rr = D / 2;
+  const dEff = z > 0 ? Math.min(d, Rr / z) : d;
+  const r = Math.max(0, Rr - z * dEff);
+  const sides = Math.PI * (Rr + r) * Math.sqrt((Rr - r) ** 2 + dEff ** 2);
+  const bottom = Math.PI * r * r;
+  const ft3 = (Math.PI * dEff / 3) * (Rr * Rr + Rr * r + r * r);
+  return { surface: Math.PI * Rr * Rr, bottom, sides, wetted: bottom + sides, depth: dEff, gallons: ft3 * GAL_PER_FT3, acreFeet: ft3 / 43560 };
+}
+
+/* Starting rates, lb of sodium bentonite per ft² (commonly cited ranges from
+   Texas A&M AgriLife and bentonite suppliers). A soil test or a trial plot
+   beats any table, and every number is editable in the app. */
+export const BENTONITE_SOILS = [
+  { key: 'clay', label: 'Clay / silty clay', mixed: 1.5, sprinkle: 3, range: '1–2' },
+  { key: 'loam', label: 'Loam / silt loam', mixed: 2, sprinkle: 3.5, range: '1.5–3' },
+  { key: 'sandyloam', label: 'Sandy loam', mixed: 3, sprinkle: 4, range: '2–4' },
+  { key: 'sand', label: 'Sand', mixed: 4, sprinkle: 5, range: '3–5' },
+  { key: 'gravel', label: 'Gravel / rock / fractured limestone', mixed: 5.5, sprinkle: 6, range: '5–6+' },
+];
+
+/**
+ * Pounds, bags and sacks of bentonite for an area.
+ * Rate gets +1 lb/ft² per 8 ft of water beyond the first 8 ft, then a
+ * safety margin for uneven spreading (Texas A&M suggests 25–50%).
+ */
+export function bentoniteNeed({ area, rate, depth = 0, margin = 0.25, bagLb = 50, bagPrice, tonPrice }) {
+  const a = num(area);
+  if (!(a > 0) || !(num(rate) > 0)) return null;
+  const depthAdd = Math.max(0, num(depth) - 8) / 8;
+  const rateAdj = (num(rate) + depthAdd) * (1 + num(margin));
+  const lbs = a * rateAdj;
+  const bags = Math.ceil(lbs / num(bagLb, 50));
+  const tons = lbs / 2000;
+  return {
+    area: a, baseRate: num(rate), depthAdd, rateAdj, lbs, bags, tons,
+    sacks: Math.ceil(lbs / 2000), // 1-ton bulk super sacks
+    perSquare: rateAdj * 100,     // lb per 10 × 10 ft square
+    bagsPerSquare: (rateAdj * 100) / num(bagLb, 50),
+    costBags: num(bagPrice) > 0 ? bags * num(bagPrice) : null,
+    costBulk: num(tonPrice) > 0 ? tons * num(tonPrice) : null,
+  };
+}

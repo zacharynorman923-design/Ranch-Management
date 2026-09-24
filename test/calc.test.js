@@ -256,3 +256,32 @@ test('rain source mix separates gauge, estimate, hand-logged and sample', () => 
   near(m.estimate.inches, 0.5);
   assert.equal(C.rainSource(r[3]), 'sample');
 });
+
+test('stock tank geometry: round, rectangle, known area, cone cap', () => {
+  const g = C.tankGeometry({ shape: 'round', diameter: 100, depth: 8, slope: 3 });
+  near(g.surface, Math.PI * 2500, 1e-6);
+  near(g.bottom, Math.PI * 26 * 26, 1e-6);
+  near(g.sides, Math.PI * 76 * Math.sqrt(24 * 24 + 64), 1e-6);
+  near(g.gallons, (Math.PI * 8 / 3) * (2500 + 50 * 26 + 676) * 7.48052, 1e-3);
+  const r = C.tankGeometry({ shape: 'rect', length: 120, width: 60, depth: 6, slope: 3 });
+  assert.equal(r.bottom, 84 * 24);
+  near(r.sides, (120 + 84) * 6 * Math.sqrt(10) + (60 + 24) * 6 * Math.sqrt(10), 1e-6);
+  const a = C.tankGeometry({ shape: 'area', surfaceSqft: Math.PI * 2500, depth: 8, slope: 3 });
+  near(a.wetted, g.wetted, 1e-6);
+  // 30 ft round at 3:1 bottoms out at 5 ft, not 10
+  near(C.tankGeometry({ shape: 'round', diameter: 30, depth: 10, slope: 3 }).depth, 5, 1e-9);
+  assert.equal(C.tankGeometry({ shape: 'rect', length: 0, width: 5, depth: 2 }), null);
+});
+
+test('bentonite need: rate, depth adjustment, margin, bags', () => {
+  const n = C.bentoniteNeed({ area: 8000, rate: 2, depth: 8, margin: 0.25, bagLb: 50, bagPrice: 14 });
+  near(n.rateAdj, 2.5, 1e-9);
+  near(n.lbs, 20000, 1e-6);
+  assert.equal(n.bags, 400);
+  assert.equal(n.sacks, 10);
+  near(n.perSquare, 250, 1e-9);
+  near(n.costBags, 5600, 1e-9);
+  // 16 ft deep adds 1 lb/ft² before the margin
+  near(C.bentoniteNeed({ area: 100, rate: 2, depth: 16, margin: 0 }).rateAdj, 3, 1e-9);
+  assert.equal(C.bentoniteNeed({ area: 0, rate: 2 }), null);
+});
