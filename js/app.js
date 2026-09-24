@@ -25,7 +25,7 @@ const ROUTES = {
   dove: { title: 'Dove fields', group: 'Wildlife', render: W.dove, bind: W.bindDove },
   rain: { title: 'Rain gauge', group: 'Land & water', render: G.rain },
   water: { title: 'Water points', group: 'Land & water', render: L.water, bind: L.bindWater },
-  brush: { title: 'Brush · cedar & pear', group: 'Land & water', render: L.brush, bind: L.bindBrush },
+  brush: { title: 'Brush · cedar, mesquite, pear', group: 'Land & water', render: L.brush, bind: L.bindBrush },
   fences: { title: 'Fences & gates', group: 'Land & water', render: L.fences },
   map: { title: 'Map', group: 'Land & water', render: L.map, bind: L.bindMap },
   valuation: { title: 'Valuation binder', group: 'Compliance', render: K.valuation, bind: K.bindValuation },

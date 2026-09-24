@@ -349,3 +349,15 @@ test('Pronone pellets: per 3 ft, 600/acre limit; license flags', () => {
   assert.equal(C.brushPlan('pear', 'pad').rup, true);
   assert.equal(C.brushPlan('cedar', 'pellet').rup, false);
 });
+
+test('mesquite: general-use methods, stem spray in diesel, Sendero aerial', () => {
+  assert.ok(C.BRUSH_PLANS.mesquite.every((m) => !m.rup));
+  const stem = C.brushPlan('mesquite', 'stem');
+  const mix = C.herbicideMix({ plants: 120, perGal: stem.perGal, pct: stem.pct, surfPct: stem.surfPct });
+  near(mix.mixGal, 3, 1e-9);
+  near(mix.herbFlOz, 96, 1e-9);   // 25% of 3 gal
+  assert.equal(mix.surfFlOz, 0);
+  const air = C.broadcastNeed({ acres: 40, ptPerAcre: 1.75, carrier: 5 });
+  near(air.productPt * 16 / 40, 28, 1e-9); // 28 oz/acre
+  assert.equal(air.carrierGal, 200);
+});

@@ -1,5 +1,5 @@
 /* Offline shell. Bump VERSION on every release so phones pick up new code. */
-const VERSION = 'ranch-v13';
+const VERSION = 'ranch-v14';
 const SHELL = [
   './', './index.html', './css/styles.css', './manifest.webmanifest', './icons/icon.svg', './vendor/leaflet/leaflet.js', './vendor/leaflet/leaflet.css', './js/geo.js', './js/mapcore.js', './js/mappick.js', './icons/icon-192.png', './icons/apple-touch-icon.png',
   './js/app.js', './js/version.js', './js/calc.js', './js/db.js', './js/model.js', './js/schema.js', './js/ui.js', './js/photos.js', './js/relay.js', './js/sample.js',
