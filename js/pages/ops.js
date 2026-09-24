@@ -5,6 +5,7 @@ import * as C from '../calc.js';
 import { S, DEFAULTS } from '../model.js';
 import { addPhotoFile, photoURL, deletePhoto } from '../photos.js';
 import { loadSample, removeSample } from '../sample.js';
+import { syncRelay, relayStatus, relayRunNow, prunePhotos } from '../relay.js';
 import { esc, stat, pill, listPanel, dateLabel, daysLabel, toast, download, openForm } from '../ui.js';
 
 /* --------------------------------- tasks --------------------------------- */
@@ -69,9 +70,11 @@ export function contacts() {
 
 /* --------------------------------- photos -------------------------------- */
 let tagFilter = '';
+const QUICK_TAGS = ['buck', 'doe', 'hog', 'predator', 'turkey'];
 export function photos(params) {
   const device = params.get('device') || '';
-  let ps = db.all('photos').sort((a, b) => (a.date < b.date ? 1 : -1));
+  const when = (x) => `${x.date || ''} ${x.time || ''}`;
+  let ps = db.all('photos').sort((a, b) => (when(a) < when(b) ? 1 : -1));
   if (device) ps = ps.filter((p) => p.device === device);
   const tags = [...new Set(db.all('photos').flatMap((p) => String(p.tags || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)))].sort();
   if (tagFilter) ps = ps.filter((p) => String(p.tags || '').toLowerCase().split(',').map((x) => x.trim()).includes(tagFilter));
@@ -80,19 +83,27 @@ export function photos(params) {
     <section class="panel">
       <div class="panel-head"><h2>Photo log${dev ? ` · ${esc(dev.name)}` : ''}</h2>
         <label class="btn primary">📷 Add photos<input type="file" accept="image/*" multiple data-upload hidden></label></div>
+      ${db.all('photos').some((p) => p.source === 'reveal') ? `<p class="note">Tactacam photos arrive automatically. Untagged ones are removed from this phone after ${esc(S().camPhotoKeepDays ?? 30)} days, so <b>tag the keepers</b> (buck, hog…) or flag them for the packet.</p>` : ''}
       <p class="note">Photos keep their GPS and date from the camera. A photo you just took gets the phone's GPS instead. Trail-cam dumps usually have no GPS, so pick the camera and they inherit its location. Tag them <i>buck, doe, hog, predator</i> to build a picture of what's moving where.</p>
       ${dev ? '' : `<div class="form-grid"><label class="field">Trail camera for this upload<select data-updev><option value="">—</option>${db.all('devices').filter((d) => d.type === 'camera').map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label>
         <label class="field">Tags for this upload<input data-uptags placeholder="buck, feeder 2"></label></div>`}
       ${tags.length ? `<div class="chips"><button class="chip ${tagFilter ? '' : 'on'}" data-tag="">all</button>${tags.map((t) => `<button class="chip ${t === tagFilter ? 'on' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
       ${ps.length ? `<div class="gallery">${ps.slice(0, 120).map((p) => `
         <figure data-photo="${esc(p.id)}"><img data-pid="${esc(p.id)}" alt="${esc(p.caption || '')}" loading="lazy">
-          <figcaption>${esc(p.caption || '')}<br><small>${esc(p.date || '')}${p.loc?.lat ? ' · 📍' : ''}${p.packet ? ' · 📁' : ''}${p.tags ? ' · ' + esc(p.tags) : ''}</small></figcaption></figure>`).join('')}</div>`
+          <figcaption>${esc(p.caption || '')}<br><small>${esc(p.date || '')}${p.temp !== '' && p.temp != null ? ` · ${esc(p.temp)}°` : ''}${p.moon ? ` · ${esc(p.moon)}` : ''}${p.loc?.lat ? ' · 📍' : ''}${p.packet ? ' · 📁' : ''}${p.tags ? ' · ' + esc(p.tags) : ''}</small>
+          ${p.source === 'reveal' && !p.tags ? `<span class="quick-tags">${QUICK_TAGS.map((t) => `<button class="chip" data-qtag="${esc(p.id)}:${t}">${t}</button>`).join('')}</span>` : ''}</figcaption></figure>`).join('')}</div>`
         : '<p class="empty">No photos yet.</p>'}
     </section>`;
 }
 export function bindPhotos(el, rerender, params) {
   el.querySelectorAll('img[data-pid]').forEach(async (img) => { img.src = (await photoURL(img.dataset.pid)) || ''; });
   el.querySelectorAll('[data-tag]').forEach((b) => b.addEventListener('click', () => { tagFilter = b.dataset.tag; rerender(); }));
+  el.querySelectorAll('[data-qtag]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const [id, tag] = b.dataset.qtag.split(':');
+    const p = db.get('photos', id);
+    if (p) await db.put('photos', { ...p, tags: tag });
+  }));
   el.querySelectorAll('figure[data-photo]').forEach((f) => f.addEventListener('click', async () => {
     const p = db.get('photos', f.dataset.photo);
     const r = await openForm('photos', p);
@@ -139,6 +150,22 @@ export function settings() {
       <p class="note">Defaults are approximate normals for Mason, TX (about ${s.normals.reduce((a, b) => a + Number(b), 0).toFixed(1)}″/yr). For exact figures, use NOAA's 1991–2020 normals for the nearest station, or your own gauge's long-term average.</p>
     </section>
     <section class="panel">
+      <div class="panel-head"><h2>Automatic data (relay)</h2>${s.relayUrl && s.relayToken ? pill(s.relayLastSync ? `synced ${relTime(s.relayLastSync)}` : 'not synced yet', s.relayLastResult?.errors?.length ? 'warn' : 'good') : pill('not set up')}</div>
+      <p class="note">Your relay is a small free Cloudflare service that runs while this phone is off. It pulls <b>rain</b> (your gauge, or a weather-model estimate for the ranch until you have one) and <b>Tactacam Reveal photos</b> with camera battery and signal. This app picks up whatever is new whenever it has signal. Setup steps are in <a href="https://github.com/zacharynorman923-design/Ranch-Management/blob/main/relay/README.md" target="_blank" rel="noopener">relay/README.md</a>.</p>
+      <div class="form-grid">
+        <label class="field">Relay address<input data-set="relayUrl" inputmode="url" autocapitalize="off" placeholder="https://ranch-relay.you.workers.dev" value="${esc(s.relayUrl || '')}"></label>
+        <label class="field">Relay token<input data-set="relayToken" type="password" autocomplete="off" value="${esc(s.relayToken || '')}"><small class="help">The RELAY_TOKEN you chose during setup.</small></label>
+        <label class="field">Keep untagged camera photos (days)<input type="number" data-set="camPhotoKeepDays" value="${esc(s.camPhotoKeepDays ?? 30)}"><small class="help">Tagged photos and packet photos are kept forever. 0 = keep everything.</small></label>
+        <label class="field wide check"><span><input type="checkbox" data-set="relayPhotos" ${s.relayPhotos === false ? '' : 'checked'}> Download camera photos to this phone</span></label>
+      </div>
+      <div class="head-actions">
+        <button class="btn primary" data-relay-sync ${s.relayUrl && s.relayToken ? '' : 'disabled'}>Sync now</button>
+        <button class="btn" data-relay-status ${s.relayUrl && s.relayToken ? '' : 'disabled'}>Check relay</button>
+      </div>
+      ${s.relayLastResult ? `<p class="note small">Last sync: ${s.relayLastResult.rain} rain days, ${s.relayLastResult.cameras} cameras, ${s.relayLastResult.photos} new photos.${(s.relayLastResult.errors || []).map((e) => `<br><span class="bad-t">${esc(e)}</span>`).join('')}</p>` : ''}
+      <pre class="small relay-out hidden" data-relay-out></pre>
+    </section>
+    <section class="panel">
       <div class="panel-head"><h2>Backup & devices</h2></div>
       <p class="note">Everything is stored <b>on this device only</b> (${counts}). Export a backup after each trip and keep it in iCloud/Drive. Import it on another phone or computer to carry records over. Records are merged, and the newer copy wins.</p>
       <div class="head-actions">
@@ -150,7 +177,30 @@ export function settings() {
       <p class="note small">Last backup: ${s.lastBackup ? dateLabel(s.lastBackup.slice(0, 10)) : 'never'}</p>
     </section>`;
 }
+const relTime = (iso) => {
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
 export function bindSettings(el) {
+  const out = el.querySelector('[data-relay-out]');
+  const show = (x) => { out.classList.remove('hidden'); out.textContent = typeof x === 'string' ? x : JSON.stringify(x, null, 2); };
+  el.querySelector('[data-relay-sync]')?.addEventListener('click', async (e) => {
+    e.target.disabled = true; e.target.textContent = 'Syncing…';
+    try {
+      const r = await syncRelay();
+      toast(r ? `Synced: ${r.photos} photos, ${r.rain} rain days${r.errors.length ? ' (with errors)' : ''}` : 'Offline — try again with signal');
+    } catch (err) { toast(err.message); }
+  });
+  el.querySelector('[data-relay-status]')?.addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      show('Asking the relay to check its sources now…');
+      await relayRunNow();
+      show(await relayStatus());
+    } catch (err) { show(`Couldn't reach the relay: ${err.message}`); }
+    btn.disabled = false;
+  });
   el.querySelectorAll('[data-normal]').forEach((inp) => inp.addEventListener('change', async () => {
     const n = [...S().normals];
     n[Number(inp.dataset.normal)] = Number(inp.value) || 0;

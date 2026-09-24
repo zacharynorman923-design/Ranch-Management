@@ -1,0 +1,28 @@
+# Ranch relay — Cloudflare Worker + D1. See relay/README.md for setup.
+name = "ranch-relay"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ranch-relay"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"   # the deploy workflow fills this in
+
+[vars]
+# Where to estimate rain for (the pasture you care about). Mason, TX by default.
+RANCH_LAT = "30.7488"
+RANCH_LON = "-99.2303"
+RANCH_TZ = "America/Chicago"
+CAMERA_BACKFILL_DAYS = "3"   # first run only
+PHOTO_KEEP_DAYS = "45"       # relay copy; phones keep their own
+
+# Secrets (set with `wrangler secret put NAME` or the GitHub workflow):
+#   RELAY_TOKEN              long random string; paste the same value into the app
+#   TACTACAM_EMAIL           your Tactacam Reveal login
+#   TACTACAM_PASSWORD
+#   AMBIENT_API_KEY          optional, once you have an Ambient Weather station
+#   AMBIENT_APPLICATION_KEY  optional

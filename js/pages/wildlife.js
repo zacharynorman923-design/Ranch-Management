@@ -89,6 +89,12 @@ export function devices() {
   const photos = db.all('photos');
   const due = (d) => {
     const parts = [];
+    if (d.batteryPct !== '' && d.batteryPct != null) parts.push(pill(`🔋 ${Math.round(d.batteryPct)}%`, d.batteryPct < 20 ? 'bad' : d.batteryPct < 40 ? 'warn' : 'good'));
+    if (d.signal !== '' && d.signal != null) parts.push(pill(`📶 ${d.signal}`));
+    if (d.lastPhoto) {
+      const hrs = Math.round((Date.now() - Date.parse(d.lastPhoto)) / 3600e3);
+      parts.push(pill(`last photo ${hrs < 48 ? hrs + ' h' : Math.round(hrs / 24) + ' d'} ago`, hrs > 72 ? 'warn' : ''));
+    }
     const b = C.dueInfo(d.batteryDate, d.batteryDays, t);
     if (b) parts.push(pill(`batteries ${daysLabel(b.daysLeft)}`, b.state === 'overdue' ? 'bad' : b.state === 'soon' ? 'warn' : ''));
     if (['feeder', 'protein'].includes(d.type)) {
@@ -104,7 +110,7 @@ export function devices() {
         <div class="card">
           <div class="card-head"><b>${esc(d.name)}</b><small>${esc(d.type)}</small></div>
           <div class="card-body">${due(d) || '<span class="muted">no service dates yet</span>'}
-            ${d.type === 'camera' ? `<div class="muted small">${photos.filter((p) => p.device === d.id).length} tagged photos</div>` : ''}</div>
+            ${d.type === 'camera' ? `<div class="muted small">${photos.filter((p) => p.device === d.id).length} photos on this phone</div>` : ''}</div>
           <div class="card-foot">
             ${['feeder', 'protein'].includes(d.type) ? `<button class="btn sm" data-svc="${esc(d.id)}:refill">Filled</button>` : ''}
             ${d.type !== 'blind' ? `<button class="btn sm" data-svc="${esc(d.id)}:battery">Batteries</button>` : ''}
@@ -112,6 +118,7 @@ export function devices() {
             <button class="btn sm link" data-edit="devices:${esc(d.id)}">Edit</button>
           </div>
         </div>`).join('')}</div>` : '<p class="empty">Add your cameras, feeders and remote sensors.</p>'}
+      <p class="note">Tactacam Reveal cameras appear here on their own once the <a href="#/settings">relay</a> is set up. Battery, signal and photos update every 15 minutes.</p>
       <p class="note warn">Feeders are bait for doves. Turn off and clean up around any feeder near a dove field at least 10 days before you hunt it — see the <a href="#/dove">dove planner</a>.</p>
     </section>
     ${listPanel('devices')}

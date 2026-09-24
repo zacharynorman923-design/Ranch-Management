@@ -164,6 +164,14 @@ async function boot() {
   const net = () => document.getElementById('net').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', net); window.addEventListener('offline', net); net();
   render();
+  // Automatic data from the relay: now, every 15 min while open, and when signal returns.
+  const pull = () => import('./relay.js').then((m) => m.syncRelay()).then((r) => {
+    if (r && (r.photos || r.rain)) toast(`New from the ranch: ${[r.photos && `${r.photos} photos`, r.rain && `${r.rain} rain days`].filter(Boolean).join(', ')}`);
+  }).catch(() => {});
+  setTimeout(pull, 1500);
+  setInterval(pull, 15 * 60 * 1000);
+  window.addEventListener('online', pull);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pull(); });
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 boot();

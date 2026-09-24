@@ -29,7 +29,13 @@ export function rain() {
       ${w.missing.length ? `<p class="note warn">No readings for ${w.missing.map(monthName).join(', ')}. Those months are left out of the % of normal rather than counted as zero — log <b>0.00</b> if it really didn't rain.</p>` : ''}
       <p class="note">Trailing-12-month rain feeds the <a href="#/stocking">stocking calculator</a>.</p>
     </section>
-    ${listPanel('rain', { title: 'Gauge readings' })}`;
+    ${listPanel('rain', {
+      title: 'Gauge readings',
+      rows: db.all('rain').filter((r) => !(r.auto && !(Number(r.inches) > 0))),
+      note: db.all('rain').some((r) => r.auto)
+        ? 'Readings marked <b>(auto)</b> come from the relay. Dry days are counted but hidden here. A reading you log by hand replaces that day’s automatic one.'
+        : 'Want this filled in automatically? Set up the relay under <a href="#/settings">Settings</a>.',
+    })}`;
 }
 
 /* ------------------------------- stocking -------------------------------- */
