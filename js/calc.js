@@ -787,3 +787,40 @@ export function broadcastNeed({ acres, ptPerAcre, carrier }) {
   const productPt = a * num(ptPerAcre);
   return { productPt, productGal: productPt / 8, carrierGal: a * num(carrier) };
 }
+
+/* ---------------------- brush density from a photo ---------------------- */
+export const SCAN_TARGET = { cedar: 'cedar', mesquite: 'mesquite', 'prickly pear': 'pear' };
+/** Canopy-cover class used by NRCS / AgriLife brush guides. */
+export const coverClass = (pct) => (!(num(pct) > 0) ? 'none' : num(pct) < 10 ? 'light' : num(pct) <= 30 ? 'moderate' : 'heavy');
+/**
+ * Pick the planner method a scan points to, preferring products that need no
+ * applicator license. Cedar: small → pellets, redberry → pellets (it resprouts
+ * after cutting), bigger Ashe → just cut it. Mesquite: heavy cover → aerial,
+ * over 8 ft → stem spray, else leaf spray. Pear: PastureGard pad spray.
+ */
+export function suggestBrushMethod(target, s = {}) {
+  const h = num(s.typical_height_ft), cover = num(s.canopy_cover_pct);
+  if (target === 'cedar') {
+    if (s.cedar_type === 'redberry') return 'pellet';
+    if (h > 0 && h < 3) return 'pellet';
+    return s.cedar_type === 'ashe' || h >= 6 ? 'cut' : 'pellet';
+  }
+  if (target === 'mesquite') return cover > 30 ? 'aerial' : h > 8 || s.size_class === 'large' ? 'stem' : 'leaf';
+  if (target === 'pear') return 'padgu';
+  return null;
+}
+/**
+ * Turn one species row from a photo scan into planner numbers: plants per
+ * acre (count ÷ visible area), cover class, and a suggested method.
+ */
+export function scanDensity(row, areaSqft) {
+  const target = SCAN_TARGET[row?.species] || null;
+  const area = num(areaSqft);
+  const perAcre = area > 0 && num(row?.plants_counted) >= 0 ? Math.round((num(row.plants_counted) / area) * 43560) : null;
+  const pearSize = { seedling: 'small', small: 'small', medium: 'medium', large: 'large', mixed: 'medium' }[row?.size_class] || 'medium';
+  return {
+    target, perAcre, cover: num(row?.canopy_cover_pct), coverClass: coverClass(row?.canopy_cover_pct),
+    method: target ? suggestBrushMethod(target, row) : null,
+    height: num(row?.typical_height_ft) || null, canopy: num(row?.typical_canopy_ft) || null, pearSize,
+  };
+}

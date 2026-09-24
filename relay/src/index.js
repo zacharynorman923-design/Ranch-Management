@@ -12,12 +12,14 @@
      GET  /photo/:id              the JPEG
      GET  /labels?since=ISO       AI labels finished since a time
      POST /run                    run every poll now (for setup/testing)
+     POST /brush-scan             {image (base64 JPEG), view, note} → brush density estimate
    ========================================================================= */
 import { safeEqual } from './lib.js';
 import { kvGet, kvSet } from './store.js';
 import { pollRain } from './rain.js';
 import { pollTactacam, prunePhotos } from './tactacam.js';
 import { classifyPending } from './classify.js';
+import { analyzeBrushPhoto } from './brushscan.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -70,6 +72,7 @@ export default {
           ambient: !!(env.AMBIENT_API_KEY && env.AMBIENT_APPLICATION_KEY),
           estimate: !!(env.RANCH_LAT && env.RANCH_LON),
           classifier: env.ANTHROPIC_API_KEY ? (env.CLASSIFIER_MODEL || 'claude-opus-5') : false,
+          brushScan: env.ANTHROPIC_API_KEY ? (env.BRUSH_SCAN_MODEL || 'claude-opus-5') : false,
         },
         // Where the weather-model estimate is computed. 30.7488, -99.2303 is Mason town (the default).
         location: { lat: Number(env.RANCH_LAT), lon: Number(env.RANCH_LON), tz: env.RANCH_TZ || 'America/Chicago' },
@@ -111,6 +114,13 @@ export default {
       return new Response(body, { headers: { ...CORS, 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
     }
     if (p === '/run' && req.method === 'POST') return json(await runAll(env));
+    if (p === '/brush-scan' && req.method === 'POST') {
+      try {
+        return json(await analyzeBrushPhoto(env, await req.json()));
+      } catch (err) {
+        return json({ error: String(err.message || err) }, err.status || 502);
+      }
+    }
     return json({ error: 'not found' }, 404);
   },
 };

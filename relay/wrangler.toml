@@ -23,6 +23,8 @@ PHOTO_KEEP_DAYS = "45"       # relay copy; phones keep their own
 CLASSIFIER_MODEL = "claude-opus-5"   # "claude-haiku-4-5" costs roughly a fifth as much
 CLASSIFY_DAILY_LIMIT = "150"         # photos per day, a hard cap on spend
 CLASSIFY_PER_RUN = "12"              # per 15-minute run
+BRUSH_SCAN_MODEL = "claude-opus-5"   # brush-density photo analysis
+BRUSH_SCAN_DAILY_LIMIT = "40"
 
 # Secrets (set with `wrangler secret put NAME` or the GitHub workflow):
 #   RELAY_TOKEN              long random string; paste the same value into the app

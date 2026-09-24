@@ -361,3 +361,24 @@ test('mesquite: general-use methods, stem spray in diesel, Sendero aerial', () =
   near(air.productPt * 16 / 40, 28, 1e-9); // 28 oz/acre
   assert.equal(air.carrierGal, 200);
 });
+
+test('photo scan → plants/acre, cover class and a no-license method', () => {
+  const d = C.scanDensity({ species: 'cedar', cedar_type: 'redberry', plants_counted: 60, canopy_cover_pct: 22, size_class: 'medium', typical_height_ft: 5, typical_canopy_ft: 5 }, 21780);
+  assert.equal(d.target, 'cedar');
+  assert.equal(d.perAcre, 120);          // 60 in half an acre
+  assert.equal(d.coverClass, 'moderate');
+  assert.equal(d.method, 'pellet');      // redberry resprouts: pellets, not cutting
+  assert.equal(C.scanDensity({ species: 'cedar', cedar_type: 'ashe', typical_height_ft: 12, plants_counted: 5 }, 43560).method, 'cut');
+  assert.equal(C.scanDensity({ species: 'mesquite', canopy_cover_pct: 40, typical_height_ft: 10 }, 1000).method, 'aerial');
+  assert.equal(C.scanDensity({ species: 'mesquite', canopy_cover_pct: 15, typical_height_ft: 12 }, 1000).method, 'stem');
+  assert.equal(C.scanDensity({ species: 'mesquite', canopy_cover_pct: 5, typical_height_ft: 4 }, 1000).method, 'leaf');
+  const pear = C.scanDensity({ species: 'prickly pear', size_class: 'large', plants_counted: 10, canopy_cover_pct: 8 }, 0);
+  assert.equal(pear.perAcre, null);      // no area, no density
+  assert.equal(pear.pearSize, 'large');
+  assert.equal(pear.coverClass, 'light');
+  for (const t of ['cedar', 'mesquite', 'pear']) for (const s of [{}, { cedar_type: 'redberry', typical_height_ft: 2 }]) {
+    const m = C.brushPlan(t, C.suggestBrushMethod(t, s));
+    assert.ok(m && !m.rup, `${t} suggestion needs no license`);
+  }
+  assert.equal(C.scanDensity({ species: 'other brush' }, 100).target, null);
+});

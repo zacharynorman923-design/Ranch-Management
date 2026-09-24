@@ -233,6 +233,16 @@ export const COLLECTIONS = {
     ],
     cols: ['date', 'status', 'area', 'species', 'method', 'acres', 'cost'],
   },
+  brushscans: {
+    label: 'Brush photo estimate', sort: '-date',
+    fields: [
+      { k: 'date', label: 'Date', t: 'date', req: 1, def: today },
+      { k: 'area', label: 'Area / pasture', t: 'text' },
+      { k: 'view', label: 'Taken from', t: 'select', opts: o(['ground', 'Ground level'], ['elevated', 'Raised spot (truck bed, hill, stand)'], ['overhead', 'Drone, straight down']), def: 'elevated' },
+      loc, notes,
+    ],
+    cols: ['date', 'area', 'view'],
+  },
   fences: {
     label: 'Fence / gate', sort: 'name',
     fields: [
