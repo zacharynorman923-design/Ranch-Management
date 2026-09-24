@@ -54,6 +54,7 @@ h3 { font-size: 14px; font-weight: 650; margin: 18px 0 8px; color: var(--ink-sof
 #nav a { display: block; padding: 7px 12px; border-radius: 9px; color: var(--ink-soft); font-size: 14px; }
 #nav a:hover { background: var(--panel-2); text-decoration: none; }
 #nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.nav-version { font-size: 11px; color: var(--muted); padding: 18px 12px 0; }
 .nav-group { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 14px 12px 4px; }
 #menu-btn { display: none; }
 #scrim { display: none; }

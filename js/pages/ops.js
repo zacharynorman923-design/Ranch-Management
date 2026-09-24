@@ -3,6 +3,7 @@
 import * as db from '../db.js';
 import * as C from '../calc.js';
 import { S, DEFAULTS } from '../model.js';
+import { APP_VERSION } from '../version.js';
 import { addPhotoFile, photoURL, deletePhoto } from '../photos.js';
 import { loadSample, removeSample } from '../sample.js';
 import { syncRelay, relayStatus, relayRunNow, prunePhotos } from '../relay.js';
@@ -174,7 +175,7 @@ export function settings() {
         ${db.all('animals').some((a) => a.sample) ? '<button class="btn" data-unsample>Remove sample data</button>' : '<button class="btn" data-sample>Load sample ranch</button>'}
         <button class="btn danger" data-wipe>Erase everything</button>
       </div>
-      <p class="note small">Last backup: ${s.lastBackup ? dateLabel(s.lastBackup.slice(0, 10)) : 'never'}</p>
+      <p class="note small">Last backup: ${s.lastBackup ? dateLabel(s.lastBackup.slice(0, 10)) : 'never'} · App version ${esc(APP_VERSION)}</p>
     </section>`;
 }
 const relTime = (iso) => {
