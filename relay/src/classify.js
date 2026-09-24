@@ -16,14 +16,14 @@ If a person or vehicle is in frame, list it (species "person" or "vehicle") — 
 Ignore the camera's own date/time/temperature banner. Don't guess: when unsure of species or sex, say so with "unknown"/"other" and lower confidence.`;
 
 /** Anthropic-specific request knobs that not every model accepts. */
-function modelOptions(model) {
+export function modelOptions(model, schema = LABEL_SCHEMA, effort = 'low') {
   const frontier = /^claude-(opus-5|fable-5|mythos-5)/.test(model);
   return {
     ...(frontier ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
-    // Labeling is a simple task — low effort keeps it fast and cheap. Haiku 4.5 takes no effort setting.
+    // Labeling is a simple task, so low effort keeps it fast and cheap. Haiku 4.5 takes no effort setting.
     output_config: {
-      ...(/haiku-4-5/.test(model) ? {} : { effort: 'low' }),
-      format: { type: 'json_schema', schema: LABEL_SCHEMA },
+      ...(/haiku-4-5/.test(model) ? {} : { effort }),
+      format: { type: 'json_schema', schema },
     },
   };
 }

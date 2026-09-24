@@ -15,12 +15,16 @@ let running = null;
 
 export const relayConfigured = () => { const s = db.settings(); return !!(s.relayUrl && s.relayToken); };
 
-async function call(path, { as = 'json', method = 'GET' } = {}) {
+async function call(path, { as = 'json', method = 'GET', body } = {}) {
   const s = db.settings();
   const base = String(s.relayUrl).trim().replace(/\/+$/, '');
-  const r = await fetch(base + path, { method, headers: { Authorization: `Bearer ${String(s.relayToken).trim()}` } });
+  const headers = { Authorization: `Bearer ${String(s.relayToken).trim()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) };
+  const r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (r.status === 401) throw Object.assign(new Error('Relay rejected the token. Check it matches RELAY_TOKEN'), { auth: true });
-  if (!r.ok) throw new Error(`Relay ${path.split('?')[0]} HTTP ${r.status}`);
+  if (!r.ok) {
+    const msg = await r.json().then((j) => j.error).catch(() => '');
+    throw Object.assign(new Error(msg || `Relay ${path.split('?')[0]} HTTP ${r.status}`), { status: r.status });
+  }
   return as === 'blob' ? r.blob() : r.json();
 }
 
@@ -152,6 +156,9 @@ async function doSync() {
     } catch (err) { out.errors.push(`Labels: ${err.message}`); }
   }
 
+  // Brush photos taken without signal.
+  try { out.scans = await analyzePendingScans(); } catch (err) { out.errors.push(`Brush photos: ${err.message}`); }
+
   await prunePhotos();
   await db.saveSettings({ relayLastSync: new Date().toISOString(), relayLastResult: out });
   return out;
@@ -179,4 +186,34 @@ export async function relayStatus() {
 }
 export async function relayRunNow() {
   return call('/run', { method: 'POST' });
+}
+
+/* ---------------------- brush density from a photo ---------------------- */
+/**
+ * Send one brush scan's photo to the relay, which asks Claude to count cedar,
+ * mesquite and prickly pear. The result is saved on the scan record. Without
+ * signal the scan stays 'pending' and goes out on the next sync.
+ */
+export async function analyzeScan(id) {
+  const scan = db.get('brushscans', id);
+  if (!scan) return null;
+  const { photoURL } = await import('./photos.js');
+  const image = await photoURL(scan.photo);
+  if (!image) return db.put('brushscans', { ...scan, status: 'error', error: 'Photo is missing' });
+  try {
+    const out = await call('/brush-scan', { method: 'POST', body: { image, view: scan.view, note: [scan.area, scan.notes].filter(Boolean).join('. ') } });
+    return db.put('brushscans', { ...scan, status: 'done', result: out.result, model: out.model, error: '' });
+  } catch (err) {
+    // No signal: leave it queued. A daily cap: try again on a later sync.
+    if (err instanceof TypeError || err.status === 429) return db.put('brushscans', { ...scan, status: 'pending', error: err.message });
+    return db.put('brushscans', { ...scan, status: 'error', error: err.message });
+  }
+}
+async function analyzePendingScans() {
+  let n = 0;
+  for (const s of db.all('brushscans').filter((x) => x.status === 'pending').slice(0, 5)) {
+    const r = await analyzeScan(s.id);
+    if (r?.status === 'done') n++;
+  }
+  return n;
 }

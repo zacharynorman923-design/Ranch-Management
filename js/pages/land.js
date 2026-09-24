@@ -5,6 +5,8 @@ import { S } from '../model.js';
 import { esc, n0, n1, usd, stat, pill, listPanel, dateLabel, daysLabel, toast, openForm } from '../ui.js';
 import { parseMapFile, ringsOf, ringAcres, distance, toGeoJSON } from '../geo.js';
 import { BASEMAPS, MASON, loadLeaflet, boundaryRings } from '../mapcore.js';
+import { addPhotoFile, photoURL, deletePhoto } from '../photos.js';
+import { relayConfigured, analyzeScan } from '../relay.js';
 export { ringsOf };
 
 
@@ -166,12 +168,120 @@ export function brush() {
       ${planned.length ? `<h3>Planned</h3><ul class="plain">${planned.map((r) => `<li data-edit="brush:${esc(r.id)}">${pill(dateLabel(r.date), 'warn')} ${esc(r.species)} (${esc(r.method || '')}) in ${esc(r.area || 'unnamed area')}, ${n1(r.acres)} ac</li>`).join('')}</ul>` : ''}
       <p class="note">Brush work counts as “habitat control” under wildlife valuation. <b>${mapped.length} of ${db.all('brush').length}</b> treatments are outlined on the <a href="#/map?outline=newbrush">ranch map</a>: cleared areas show solid and planned ones dashed. Outline a new area there, or tap <i>outline</i> next to a treatment below.</p>
     </section>
+    ${brushScanPanel()}
     ${brushPlanner()}
     ${listPanel('brush', { title: 'Treatments', extraCols: [
       { label: 'Map', html: (r) => (ringsOf(r.shape).length ? `<a href="#/map?outline=${esc(r.id)}" onclick="event.stopPropagation()">▰ ${n1(ringAcres(ringsOf(r.shape)[0]))} ac</a>` : `<a href="#/map?outline=${esc(r.id)}" onclick="event.stopPropagation()">outline</a>`) },
       { label: '$/ac', html: (r) => { const x = C.brushRow(r, t); return x.costPerAcre == null ? '' : usd(x.costPerAcre); } },
       { label: 'Retreat', html: (r) => { const x = C.brushRow(r, t); return x.due ? `<span class="${x.overdue ? 'bad-t' : ''}">${x.due.slice(0, 7)}</span>` : ''; } },
     ] })}`;
+}
+
+/* ---------------------- brush density from a photo ----------------------- */
+const SCAN_VIEWS = { ground: 'Ground level', elevated: 'Raised spot (truck bed, hill, stand)', overhead: 'Drone, straight down' };
+const METHOD_SHORT = (target, key) => C.brushPlan(target, key)?.label.replace(/ \(.*\)$/, '') || '';
+function scanCard(sc) {
+  const res = sc.result;
+  const status = sc.status === 'done' ? '' : sc.status === 'pending'
+    ? pill(!navigator.onLine ? 'Waiting for signal' : sc.error ? 'Queued, retries on next sync' : 'Analyzing…', 'warn')
+    : pill('Failed', 'bad');
+  const rows = res ? res.species.map((sp, i) => ({ sp, i, d: C.scanDensity(sp, res.area_visible_sqft) })) : [];
+  return `<div class="card scan-card">
+    <div class="scan-top">
+      <img class="scan-thumb" data-pid="${esc(sc.photo)}" alt="Brush photo">
+      <div class="grow">
+        <b>${esc(sc.area || 'Brush photo')}</b> ${status} ${res ? pill(`${res.confidence} confidence`, res.confidence === 'high' ? 'good' : res.confidence === 'low' ? 'bad' : '') : ''}
+        <div class="small muted">${dateLabel(sc.date)} · ${esc(SCAN_VIEWS[sc.view] || '')}${sc.loc?.lat ? ' · 📍' : ''}${res ? ` · ~${n0(res.area_visible_sqft)} sq ft (${(res.area_visible_sqft / 43560).toFixed(2)} ac) in view` : ''}</div>
+        ${sc.status === 'error' || (sc.status === 'pending' && sc.error) ? `<div class="small bad-t">${esc(sc.error || '')}</div>` : ''}
+      </div>
+    </div>
+    ${res ? (rows.length ? `<ul class="scan-species">${rows.map(({ sp, i, d }) => `<li>
+        <div><b>${esc(sp.species)}</b>${sp.cedar_type && !['n/a', 'unknown'].includes(sp.cedar_type) ? ` (${esc(sp.cedar_type)})` : ''}: <b>${d.perAcre != null ? n0(d.perAcre) : '?'}</b> per acre · ${n0(d.cover)}% cover (${d.coverClass}) · ${esc(sp.size_class)}, ~${n0(sp.typical_height_ft)} ft tall
+          <br><small class="muted">${n0(sp.plants_counted)} counted${d.method ? ` · suggested: ${esc(METHOD_SHORT(d.target, d.method))}` : ''}</small></div>
+        ${d.target ? `<button class="btn scan-use" data-scan-use="${esc(sc.id)}:${i}">Use in planner</button>` : ''}</li>`).join('')}</ul>` : '<p class="small">No cedar, mesquite or prickly pear found in this photo.</p>') : ''}
+    ${res?.notes ? `<p class="small">🤖 ${esc(res.notes)}</p>` : ''}
+    <div class="head-actions">
+      ${sc.status !== 'done' || !res ? `<button class="btn" data-scan-retry="${esc(sc.id)}">Retry</button>` : ''}
+      <button class="btn" data-scan-del="${esc(sc.id)}">Delete</button>
+    </div>
+  </div>`;
+}
+function brushScanPanel() {
+  const S0 = db.settings();
+  const cfg = S0.brushScan || {};
+  const src = S0.relayInfo?.sources || {};
+  const scans = db.all('brushscans').sort((a, b) => String(b.date + b.updated).localeCompare(String(a.date + a.updated)));
+  const ready = relayConfigured();
+  return `
+  <section class="panel" id="brush-scan">
+    <div class="panel-head"><h2>📷 Estimate density from a photo</h2>${pill('AI')}</div>
+    <p class="note">Take a picture across a pasture. Claude counts the cedar, mesquite and prickly pear it can see, estimates canopy cover and plant size, and works out plants per acre. Tap <b>Use in planner</b> to carry those numbers into the chemical calculator below.</p>
+    ${!ready ? '<p class="note warn">This needs the ranch relay. Add its address and token under <a href="#/settings">Settings</a>, and set <code>ANTHROPIC_API_KEY</code> on the relay.</p>'
+      : src.brushScan === false ? '<p class="note warn">The relay has no <code>ANTHROPIC_API_KEY</code>, so photos can\'t be analyzed yet. Add the key as a GitHub secret and re-run <b>Deploy relay</b>.</p>' : ''}
+    <div class="form-grid">
+      <label class="field">Taken from<select data-set="brushScan.view">${Object.entries(SCAN_VIEWS).map(([k, l]) => `<option value="${k}" ${(cfg.view || 'elevated') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      <label class="field">Area / pasture<input data-set="brushScan.area" value="${esc(cfg.area || '')}" placeholder="e.g. North trap"></label>
+      <label class="field">Note for the AI (optional)<input data-set="brushScan.notes" value="${esc(cfg.notes || '')}" placeholder="e.g. fence posts are 12 ft apart"></label>
+    </div>
+    <div class="head-actions">
+      <label class="btn primary">📷 Take photo<input type="file" accept="image/*" capture="environment" data-scan-file hidden></label>
+      <label class="btn">🖼 Choose from library<input type="file" accept="image/*" data-scan-file hidden></label>
+    </div>
+    <details class="lines"><summary>Tips for a good estimate</summary>
+      <ul class="plain small" style="margin-top:8px">
+        <li>• <b>Get up high.</b> Stand in the truck bed or on a rise. From ground level the near brush hides everything behind it. A drone shot straight down is best.</li>
+        <li>• <b>Include something of known size</b>, like a fence line, a T-post, the truck or a cow, so distances can be judged.</li>
+        <li>• <b>One typical spot per pasture</b>, in daylight with the sun behind you. Skip the densest or thinnest corner.</li>
+        <li>• <b>It's an estimate.</b> Check it once: count the plants in a 66 × 66 ft square (1/10 acre) and multiply by 10. If they differ, trust your count.</li>
+        <li>• Each photo is one Claude request, roughly 2–5¢. The relay stops at 40 a day unless you raise <code>BRUSH_SCAN_DAILY_LIMIT</code>. Without signal the photo is saved and sent on the next sync.</li>
+      </ul>
+    </details>
+    ${scans.length ? `<div class="scan-list">${scans.slice(0, 8).map(scanCard).join('')}</div>` : ''}
+    ${scans.length > 8 ? `<p class="small muted">${scans.length - 8} older photo estimates are kept. They show as green-dot pins on the map.</p>` : ''}
+  </section>`;
+}
+function bindBrushScan(el) {
+  el.querySelectorAll('img.scan-thumb[data-pid]').forEach(async (img) => { img.src = (await photoURL(img.dataset.pid)) || ''; });
+  el.querySelectorAll('[data-scan-file]').forEach((inp) => inp.addEventListener('change', async () => {
+    const file = inp.files?.[0];
+    if (!file) return;
+    const cfg = db.settings().brushScan || {};
+    try {
+      // 1600 px keeps the brush countable and the upload ~300 KB.
+      const ph = await addPhotoFile(file, { caption: `Brush photo${cfg.area ? ` · ${cfg.area}` : ''}`, tags: 'brush', source: 'brushscan' });
+      const sc = await db.put('brushscans', { date: ph.date || C.today(), area: cfg.area || '', view: cfg.view || 'elevated', notes: cfg.notes || '', photo: ph.id, loc: ph.loc || null, status: 'pending' });
+      if (!relayConfigured()) return toast('Photo saved. Set up the relay to analyze it.');
+      if (!navigator.onLine) return toast('Saved. It will be analyzed when you have signal.');
+      toast('Analyzing the photo… (up to a minute)');
+      const done = await analyzeScan(sc.id);
+      toast(done?.status === 'done' ? 'Brush estimate ready' : `Couldn't analyze: ${done?.error || 'unknown error'}`);
+    } catch (err) { toast(`Couldn't read that photo: ${err.message}`); }
+  }));
+  el.querySelectorAll('[data-scan-retry]').forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true;
+    b.textContent = 'Analyzing…';
+    const done = await analyzeScan(b.dataset.scanRetry);
+    toast(done?.status === 'done' ? 'Brush estimate ready' : `Couldn't analyze: ${done?.error || 'unknown error'}`);
+  }));
+  el.querySelectorAll('[data-scan-del]').forEach((b) => b.addEventListener('click', async () => {
+    const sc = db.get('brushscans', b.dataset.scanDel);
+    if (!sc || !confirm('Delete this brush photo and its estimate?')) return;
+    if (sc.photo) await deletePhoto(sc.photo);
+    await db.del('brushscans', sc.id);
+  }));
+  el.querySelectorAll('[data-scan-use]').forEach((b) => b.addEventListener('click', async () => {
+    const [id, i] = b.dataset.scanUse.split(':');
+    const sc = db.get('brushscans', id);
+    const sp = sc?.result?.species?.[Number(i)];
+    if (!sp) return;
+    const d = C.scanDensity(sp, sc.result.area_visible_sqft);
+    const t = d.target;
+    await db.saveSettings({ brushPlan: { ...planState(), target: t, method: d.method || TARGETS[t].first,
+      density: d.perAcre ?? '', plants: '', height: d.height ?? planState().height, canopy: d.canopy ?? planState().canopy, pearSize: d.pearSize,
+      perGal: '', pct: '', price: '', ptPerAcre: t === 'mesquite' ? 1.75 : 4, carrier: t === 'mesquite' ? 5 : 20 } });
+    toast(`Planner set to ${TARGETS[t].label.toLowerCase()} at ${d.perAcre ?? '?'} plants/acre. Enter the acres.`);
+    requestAnimationFrame(() => document.getElementById('brush-plan')?.scrollIntoView({ behavior: 'smooth' }));
+  }));
 }
 
 /* ---------------------- cedar & prickly pear planner ---------------------- */
@@ -297,6 +407,7 @@ function brushPlanner() {
   </section>`;
 }
 export function bindBrush(el) {
+  bindBrushScan(el);
   el.querySelectorAll('[data-plan-target]').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.planTarget;
     db.saveSettings({ brushPlan: { ...planState(), target: t, method: TARGETS[t].first, perGal: '', pct: '', price: '', ptPerAcre: t === 'mesquite' ? 1.75 : 4, carrier: t === 'mesquite' ? 5 : 20 } });
@@ -359,6 +470,7 @@ const LAYERS = [
   { col: 'brush', label: 'Brush work', color: '#16A34A', name: (r) => `${r.species} ${r.date}` },
   { col: 'dovefields', label: 'Dove fields', color: '#A855F7', name: (r) => r.name },
   { col: 'pastures', label: 'Pastures', color: '#65A30D', name: (r) => r.name },
+  { col: 'brushscans', label: 'Brush photos', color: '#15803D', name: (r) => `${r.area || 'brush photo'} ${r.date}${r.result ? ` · ${r.result.species.filter((x) => x.species !== 'other brush').map((x) => `${x.species} ${Math.round(x.canopy_cover_pct)}%`).join(', ') || 'no target brush'}` : ''}` },
   { col: 'photos', label: 'Photos', color: '#E11D48', name: (r) => r.caption || r.date },
 ];
 

@@ -105,7 +105,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -241,4 +241,40 @@ test('classifier tags', () => {
   assert.deepEqual(L.tagsFromLabels({ empty: true, animals: [] }), ['empty']);
   assert.deepEqual(L.tagsFromLabels({ empty: false, animals: [{ species: 'coyote' }, { species: 'feral hog' }, { species: 'white-tailed deer', sex: 'fawn' }, { species: 'axis deer' }] }), ['coyote', 'predator', 'hog', 'fawn', 'exotic']);
   assert.equal(L.toBase64(new TextEncoder().encode('hello')), 'aGVsbG8=');
+});
+
+/* ------------------------------ brush scan -------------------------------- */
+test('brush-scan: sends the photo to Claude with the density schema, caps per day', { timeout: 30000 }, async (t) => {
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  const scan = { view: 'elevated', area_visible_sqft: 20000, species: [{ species: 'cedar', cedar_type: 'redberry', plants_counted: 60, canopy_cover_pct: 22, size_class: 'medium', typical_height_ft: 5, typical_canopy_ft: 5 }], confidence: 'medium', notes: 'Redberry cedar, scattered live oak.' };
+  globalThis.fetch = async (url, opts = {}) => {
+    const req = url instanceof Request ? url : new Request(String(url), opts);
+    sent.push({ url: req.url, headers: Object.fromEntries(req.headers), body: JSON.parse(await req.text()) });
+    return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify(scan) }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'sk', BRUSH_SCAN_DAILY_LIMIT: '2' };
+  const image = 'data:image/jpeg;base64,' + 'A'.repeat(4000);
+  const post = (b) => call(env, '/brush-scan', { method: 'POST', body: JSON.stringify(b), headers: { 'Content-Type': 'application/json' } });
+
+  const r = await post({ image, view: 'elevated', note: 'north trap' });
+  assert.equal(r.status, 200);
+  const out = await r.json();
+  assert.equal(out.result.species[0].cedar_type, 'redberry');
+  const body = sent[0].body;
+  assert.equal(body.model, 'claude-opus-5');
+  assert.equal(body.output_config.effort, 'medium');
+  assert.ok(body.output_config.format.schema.properties.area_visible_sqft);
+  assert.equal(body.messages[0].content[0].source.data.length, 4000); // data: prefix stripped
+  assert.match(body.messages[0].content[1].text, /raised spot/);
+  assert.equal(body.fallbacks, 'default');
+
+  assert.equal((await post({ image })).status, 200);
+  const capped = await post({ image });
+  assert.equal(capped.status, 429);
+  assert.match((await capped.json()).error, /limit/);
+  assert.equal((await call({ ...env, ANTHROPIC_API_KEY: '' }, '/brush-scan', { method: 'POST', body: JSON.stringify({ image }) })).status, 400);
+  assert.equal((await post({ image: 'x' })).status, 400); // no usable image
 });

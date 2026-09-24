@@ -309,3 +309,11 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .4); }
   .packet h2 { margin-top: 22px; }
   @page { margin: 0.7in; }
 }
+
+/* Brush density from a photo */
+.scan-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.scan-top { display: flex; gap: 12px; align-items: flex-start; }
+.scan-thumb { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; background: var(--line); flex: none; }
+.scan-species { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.scan-species li { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; }
+.btn.scan-use { padding: 4px 10px; font-size: 13px; white-space: nowrap; }
