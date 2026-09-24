@@ -175,6 +175,11 @@ export function brush() {
 }
 
 /* ---------------------- cedar & prickly pear planner ---------------------- */
+const TARGETS = {
+  cedar: { label: 'Cedar', species: 'cedar', retreat: 10, first: 'pellet' },
+  mesquite: { label: 'Mesquite', species: 'mesquite', retreat: 7, first: 'leaf' },
+  pear: { label: 'Prickly pear', species: 'prickly pear', retreat: 5, first: 'padgu' },
+};
 const PEAR_SIZES = { small: ['Small clumps (under 2 ft)', 20], medium: ['Medium (2–4 ft)', 8], large: ['Large (over 4 ft / 6 ft wide)', 3] };
 const PLAN_DEFAULTS = { target: 'cedar', method: 'pellet', perUnit: 2, plants: '', density: '', acres: '', height: 4, canopy: 4, pearSize: 'medium', perGal: '', pct: '', tank: 4, price: '', carrier: 20, ptPerAcre: 4 };
 const planState = () => ({ ...PLAN_DEFAULTS, ...(db.settings().brushPlan || {}) });
@@ -211,10 +216,10 @@ function brushPlanner() {
     out = `<div class="stats">
       ${stat('Spray mix', `${r.mixGal.toFixed(1)} gal`, `${n0(plants)} plants at ~${r.perGal}/gal`, 'accent')}
       ${stat(m.product.split(' (')[0], floz(r.herbFlOz), `${r.pct}% of the mix`)}
-      ${stat('Surfactant', floz(r.surfFlOz), '0.25% non-ionic (80–90% AI)')}
+      ${m.carrier ? stat('Carrier', `${(r.mixGal - r.herbGal).toFixed(1)} gal`, esc(m.carrier)) : stat('Surfactant', floz(r.surfFlOz), `${m.surfPct ?? 0.25}% non-ionic (80–90% AI)`)}
       ${r.cost != null ? stat('Herbicide cost', usd(r.cost)) : ''}
     </div>
-    <p class="note">Per <b>${esc(P.tank)}-gal</b> tank: <b>${r.perTank(P.tank).herbFlOz.toFixed(1)} fl oz</b> herbicide + <b>${r.perTank(P.tank).surfFlOz.toFixed(1)} fl oz</b> surfactant, then top up with water. ${Math.ceil(r.mixGal / Number(P.tank || 1))} tank fills.</p>`;
+    <p class="note">Per <b>${esc(P.tank)}-gal</b> tank: <b>${floz(r.perTank(P.tank).herbFlOz)}</b> herbicide${m.carrier ? `, then fill with ${esc(m.carrier)}.` : ` + <b>${floz(r.perTank(P.tank).surfFlOz)}</b> surfactant, then top up with water.`} ${(() => { const n = Math.ceil(r.mixGal / Number(P.tank || 1)); return `${n} tank fill${n === 1 ? '' : 's'}.`; })()}</p>`;
   } else if (m.kind === 'pellet' && r) {
     out = `<div class="stats">
       ${stat('Per tree', `${r.perPlant} pellets`, `${Number(P.perUnit) || m.perUnit} per 3 ft of height or canopy`, 'accent')}
@@ -239,8 +244,8 @@ function brushPlanner() {
   } else out = '<p class="empty">Enter how many plants (or plants per acre and acres) to calculate.</p>';
   return `
   <section class="panel" id="brush-plan">
-    <div class="panel-head"><h2>Plan cedar &amp; prickly pear work</h2>${pill('Texas A&M Brush Busters')}</div>
-    <div class="seg">${[['cedar', 'Cedar'], ['pear', 'Prickly pear']].map(([k, l]) => `<button class="${P.target === k ? 'on' : ''}" data-plan-target="${k}">${l}</button>`).join('')}</div>
+    <div class="panel-head"><h2>Plan cedar, mesquite &amp; prickly pear work</h2>${pill('Texas A&M Brush Busters')}</div>
+    <div class="seg">${Object.entries(TARGETS).map(([k, { label: l }]) => `<button class="${P.target === k ? 'on' : ''}" data-plan-target="${k}">${l}</button>`).join('')}</div>
     <div class="form-grid">
       ${sel('method', 'Method', methods.map((x) => [x.key, `${x.label}${x.kind === 'none' ? ' · no chemical' : x.rup ? ' · license needed' : ' · no license needed'}`]))}
       ${m.kind === 'broadcast' ? inp('acres', 'Acres to spray') + inp('ptPerAcre', 'Rate (pints/acre)') + inp('carrier', 'Spray volume (gal/acre)', '', '20–25 by ground, 4+ by air.')
@@ -254,25 +259,28 @@ function brushPlanner() {
       ${m.kind !== 'none' && m.kind !== 'pellet' ? inp('price', `${m.kind === 'broadcast' ? m.product : m.product.split(' (')[0]} price ($/gal)`) : ''}
     </div>
     ${m.kind === 'none' ? '' : m.rup
-      ? `<p class="note warn">🔒 <b>Restricted use.</b> ${esc(m.product.split(' (')[0])} needs a Texas Department of Agriculture private applicator license to buy and apply, or a licensed applicator. No license? Try ${P.target === 'pear' ? '<b>Pad / stem spray (PastureGard HL)</b>' : '<b>Pellets</b> or <b>Soil spot (Velpar L)</b>'}.</p>`
+      ? `<p class="note warn">🔒 <b>Restricted use.</b> ${esc(m.product.split(' (')[0])} needs a Texas Department of Agriculture private applicator license to buy and apply, or a licensed applicator. No license? Try ${P.target === 'pear' ? '<b>Pad / stem spray (PastureGard HL)</b>' : P.target === 'mesquite' ? '<b>Leaf spray (Sendero)</b>' : '<b>Pellets</b> or <b>Soil spot (Velpar L)</b>'}.</p>`
       : `<p class="note">✅ <b>General use.</b> No applicator license needed. You can buy it at the feed store. Still read and follow the label.</p>`}
     ${out}
     <h3>How to do it</h3>
     <ol class="steps">
-      ${m.kind === 'mix' ? `<li>Mix: fill the tank half full of water, add <b>${esc(m.product)}</b> at ${esc(m.pctRange)}${m.altProducts ? ` (or ${esc(m.altProducts)})` : ''}, then 0.25% surfactant. Add spray dye so you can see what's done, and top up.</li>` : ''}
+      ${m.kind === 'mix' ? (m.carrier
+        ? `<li>Mix: <b>${esc(m.product)}</b> at ${esc(m.pctRange)} in ${esc(m.carrier)}${m.altProducts ? ` (or ${esc(m.altProducts)})` : ''}. No water and no surfactant. Add an oil-soluble dye so you can see which stems are done.</li>`
+        : `<li>Mix: fill the tank half full of water, add <b>${esc(m.product)}</b> at ${esc(m.pctRange)}${m.altProducts ? ` (or ${esc(m.altProducts)})` : ''}, then ${m.surfPct ?? 0.25}% surfactant. Add spray dye so you can see what's done, and top up.</li>`) : ''}
       ${m.kind === 'soil' ? '<li>Set an exact-delivery handgun or syringe to 2 ml and attach it to the Velpar L jug. It is used undiluted.</li>' : ''}
       ${m.kind === 'pellet' ? '<li>Pronone Power Pellets come in jars and pails from ranch-supply stores. Carry them in a pouch and count as you go. Marking treated trees with flagging tape helps.</li>' : ''}
       <li>${esc(m.note)}</li>
       <li><b>When:</b> ${esc(m.when)}</li>
-      <li>Outline the area on the <a href="#/map?outline=newbrush">map</a> and log the job below, so it counts as habitat control in the valuation packet and shows up for retreatment in ${P.target === 'cedar' ? '~10' : '~5'} years.</li>
+      <li>Outline the area on the <a href="#/map?outline=newbrush">map</a> and log the job below, so it counts as habitat control in the valuation packet and shows up for retreatment in ~${TARGETS[P.target]?.retreat ?? 7} years.</li>
     </ol>
     <div class="head-actions">
       <button class="btn" data-plan-log="planned">Save as planned</button>
       <button class="btn primary" data-plan-log="done">Log as done</button>
     </div>
-    <details class="lines" ${m.kind === 'none' ? 'open' : ''}><summary>Non-chemical alternatives for ${P.target === 'cedar' ? 'cedar' : 'prickly pear'}</summary>
+    <details class="lines" ${m.kind === 'none' ? 'open' : ''}><summary>Non-chemical alternatives for ${esc((TARGETS[P.target]?.label || '').toLowerCase())}</summary>
       <ul class="plain small" style="margin-top:8px">${alternatives.map((x) => `<li>• <b>${esc(x.label)}.</b> ${esc(x.note)} <i>${esc(x.when)}</i></li>`).join('')}
-        ${P.target === 'cedar' ? '<li>• <b>Goats.</b> They browse cedar seedlings and resprouts and help keep a cleared area clean, but they won’t clear an established stand.</li><li>• <b>Hire it out.</b> A skid steer with tree shears or a mulcher clears 1–3 ac/day in moderate cedar. NRCS EQIP practice 314 (Brush Management) can cost-share it.</li>'
+        ${P.target === 'mesquite' ? '<li>• <b>Don’t shred or chain it.</b> Taking the top off without killing the root crown turns one trunk into a thicket of resprouts.</li><li>• <b>Leave some.</b> Mesquite beans feed deer, and the shade is loafing cover for cattle. Clear dense stands and leave scattered big trees, especially along draws.</li><li>• <b>Hire it out.</b> Grubbing or root-plowing by a dozer or skid-steer contractor, cost-shared through NRCS EQIP practice 314 (Brush Management).</li>'
+          : P.target === 'cedar' ? '<li>• <b>Goats.</b> They browse cedar seedlings and resprouts and help keep a cleared area clean, but they won’t clear an established stand.</li><li>• <b>Hire it out.</b> A skid steer with tree shears or a mulcher clears 1–3 ac/day in moderate cedar. NRCS EQIP practice 314 (Brush Management) can cost-share it.</li>'
           : '<li>• <b>Pear burner (propane).</b> Singeing off the spines turns pear into emergency cattle feed in a drought. It uses the pear rather than removing it.</li><li>• <b>Leave some.</b> Scattered pear clumps are food and cover for deer, quail and javelina. Clear the dense stands and keep 5–10% cover.</li>'}
       </ul>
     </details>
@@ -280,7 +288,7 @@ function brushPlanner() {
       <ul class="plain small" style="margin-top:8px">
         <li>• Always read and follow the label. It is the law, and it overrides these notes.</li>
         <li>• <b>Restricted use (license needed):</b> Tordon 22K, Surmount and MezaVue, which all contain picloram. Buying and applying them needs a Texas Department of Agriculture private applicator license, or hire a licensed applicator.</li>
-        <li>• <b>General use (no license):</b> Pronone Power Pellets and Velpar L (hexazinone) for cedar, and PastureGard HL (triclopyr + fluroxypyr) for prickly pear. Product status can change, so check the label on the container you buy.</li>
+        <li>• <b>General use (no license):</b> Pronone Power Pellets and Velpar L (hexazinone) for cedar; Sendero, Remedy Ultra and Reclaim for mesquite; and PastureGard HL (triclopyr + fluroxypyr) for prickly pear. Product status can change, so check the label on the container you buy.</li>
         <li>• Picloram and hexazinone move through the soil. Keep them away from the root zones of live oaks and other trees you want to keep (roots reach well past the drip line), and away from wells, tanks and creeks.</li>
         <li>• Don't spray in wind or when drift could reach neighbors' crops or gardens. Wear gloves and eye protection, and follow the label's grazing and haying restrictions.</li>
         <li>• Mature cedar–oak woodland can be habitat for the endangered golden-cheeked warbler. Talk to TPWD or USFWS before clearing big, old stands.</li>
@@ -291,7 +299,7 @@ function brushPlanner() {
 export function bindBrush(el) {
   el.querySelectorAll('[data-plan-target]').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.planTarget;
-    db.saveSettings({ brushPlan: { ...planState(), target: t, method: t === 'cedar' ? 'pellet' : 'padgu', perGal: '', pct: '', price: '' } });
+    db.saveSettings({ brushPlan: { ...planState(), target: t, method: TARGETS[t].first, perGal: '', pct: '', price: '', ptPerAcre: t === 'mesquite' ? 1.75 : 4, carrier: t === 'mesquite' ? 5 : 20 } });
   }));
   el.querySelectorAll('[data-plan-log]').forEach((b) => b.addEventListener('click', () => {
     const P = planState();
@@ -303,11 +311,11 @@ export function bindBrush(el) {
       : 'No chemical';
     openForm('brush', null, {
       status: b.dataset.planLog,
-      species: P.target === 'pear' ? 'prickly pear' : 'cedar',
+      species: TARGETS[P.target]?.species || 'other',
       method: m.method,
       acres: Number(P.acres) || '',
       cost: r?.cost != null ? Math.round(r.cost) : '',
-      retreatYears: P.target === 'pear' ? 5 : 10,
+      retreatYears: TARGETS[P.target]?.retreat ?? 7,
       notes: `${m.label}. ${chem}.`,
     });
   }));
@@ -563,7 +571,7 @@ async function saveShape(rings, verb) {
     const all = rings.flat();
     const loc = { lat: +(all.reduce((t, p) => t + p[1], 0) / all.length).toFixed(6), lon: +(all.reduce((t, p) => t + p[0], 0) / all.length).toFixed(6) };
     const plan = db.settings().brushPlan;
-    const saved = await openForm('brush', null, { shape: toGeoJSON(rings, { name: 'Brush treatment' }), acres: Math.round(acres * 10) / 10, loc, status: 'done', species: plan?.target === 'pear' ? 'prickly pear' : 'cedar' });
+    const saved = await openForm('brush', null, { shape: toGeoJSON(rings, { name: 'Brush treatment' }), acres: Math.round(acres * 10) / 10, loc, status: 'done', species: TARGETS[plan?.target]?.species || 'cedar' });
     if (saved) { M.target = saved.id; toast(`${verb}: ${saved.species} area, ${n1(acres)} ac`); }
   } else if (targetCol(M.target) === 'brush') {
     const b = db.get('brush', M.target);
