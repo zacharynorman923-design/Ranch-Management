@@ -632,8 +632,12 @@ export const DOVE_CROPS = [
     tip: 'The fastest option. It is also a good late planting for the second split.' },
   { key: 'wheat', label: 'Wheat (grain)', broadcast: [90, 120], drilled: [60, 90], window: ['10-15', '11-30'], days: [200, 230], source: 'AgriLife wheat recommendations, Central Texas',
     tip: 'Wheat planted in fall gives seed the next spring, not by Sept 1. Top-sowing wheat on a dove field is legal only at AgriLife rates and dates for wheat planting. Outside them it is baiting.' },
-  { key: 'native', label: 'Native (croton / native sunflower)', broadcast: null, window: ['01-01', '03-15'], days: null, source: 'AgriLife / TPWD dove habitat guidance',
-    tip: 'No seed. Disk strips in late winter to stir up croton (dove weed) and native sunflower.' },
+  { key: 'croton', label: 'Croton / dove weed (seeded)', broadcast: [3, 5], drilled: [3, 5], window: ['12-01', '03-31'], startPrev: true, days: null, seedNote: 'Aug → frost', agrilife: false,
+    source: 'Native-seed supplier rates (3–5 lb/ac). AgriLife’s dove table (EWF-104) does not list croton; species info from AgriLife “Plants of Texas Rangelands”.',
+    tip: 'Sow in winter or early spring and cover it with shallow disking (under 3 in). Croton seed is mostly dormant and needs a winter to break dormancy, so a spring or summer sowing mostly waits a year. It grows slowly through early summer, then drops seed from August until frost, which is right for the opener. Woolly and Texas croton like sandy soils (Mason’s granite sands). One-seed croton grows on shallow limestone. Cattle avoid it, and it is toxic in quantity, so keep it out of hay fields. Once a stand is established, disking in winter keeps it coming back. Don’t broadcast croton seed in summer on a field you’ll hunt.' },
+  { key: 'native', label: 'Native (disk only: croton, sunflower, ragweed)', broadcast: null, window: ['12-01', '02-28'], startPrev: true, days: null, seedNote: 'Jul → frost',
+    source: 'TPWD / AgriLife fallow-disking guidance',
+    tip: 'No seed. Disk strips shallowly (2–3 in) in winter to wake the seed bank of croton, native sunflower and ragweed, all top dove foods. Rotate strips each year so there is always first-year growth. It works best where croton or sunflowers already grow nearby.' },
 ];
 export const doveCrop = (key) => DOVE_CROPS.find((c) => c.key === key) || null;
 
@@ -650,10 +654,11 @@ export function doveCropAdvice(key, { opener, method = 'broadcast', acres, plant
   const rate = !c.broadcast ? null
     : method === 'drilled' ? (c.drilled || c.broadcast.map((x) => Math.round(x * (c.drilledFactor ?? 0.5) * 10) / 10))
     : c.broadcast;
-  // Wheat for this opener would have been planted the previous fall.
+  // Wheat for this opener was planted the previous fall; croton and disking
+  // run from December of the previous year into late winter.
   const wYear = c.key === 'wheat' ? year - 1 : year;
-  const window = [`${wYear}-${c.window[0]}`, `${wYear}-${c.window[1]}`];
-  let plantBy = null, plantFrom = window[0];
+  const window = [`${c.startPrev ? year - 1 : wYear}-${c.window[0]}`, `${wYear}-${c.window[1]}`];
+  let plantBy = c.days ? null : window[1], plantFrom = window[0];
   if (c.days) {
     // Mature at least 21 days before the opener, for the first mow strip.
     plantBy = addDays(opener, -(c.days[1] + 21));
@@ -663,12 +668,13 @@ export function doveCropAdvice(key, { opener, method = 'broadcast', acres, plant
   const checks = [];
   if (plantDate) {
     const inWindow = plantDate >= window[0] && plantDate <= window[1];
-    checks.push({ ok: inWindow, text: inWindow ? 'Planting date is inside the AgriLife window.' : `Planting date is outside the AgriLife window (${window[0]} to ${window[1]}). Keep records showing it was a normal agricultural planting.` });
+    const who = c.agrilife === false ? 'recommended' : 'AgriLife';
+    checks.push({ ok: inWindow, text: inWindow ? `Planting date is inside the ${who} window.` : `Planting date is outside the ${who} window (${window[0]} to ${window[1]}). Keep records showing it was a normal agricultural planting.` });
   }
   if (seedRate !== '' && seedRate != null && rate) {
     const r = Number(seedRate);
     const ok = r >= rate[0] * 0.9 && r <= rate[1] * 1.1;
-    checks.push({ ok, text: ok ? `Seeding rate ${r} lb/ac is within the ${rate[0]}–${rate[1]} lb/ac ${method} range.` : `Seeding rate ${r} lb/ac is outside the ${rate[0]}–${rate[1]} lb/ac AgriLife ${method} range. Heavy seeding on a dove field can be treated as baiting.` });
+    checks.push({ ok, text: ok ? `Seeding rate ${r} lb/ac is within the ${rate[0]}–${rate[1]} lb/ac ${method} range.` : `Seeding rate ${r} lb/ac is outside the ${rate[0]}–${rate[1]} lb/ac ${c.agrilife === false ? 'recommended' : 'AgriLife'} ${method} range. Heavy seeding on a dove field can be treated as baiting.` });
   }
   return {
     crop: c, method, rate, window, plantFrom, plantBy,

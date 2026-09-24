@@ -159,11 +159,11 @@ export const COLLECTIONS = {
     fields: [
       { k: 'name', label: 'Field', t: 'text', req: 1 },
       { k: 'acres', label: 'Acres', t: 'num' },
-      { k: 'crop', label: 'Crop', t: 'select', opts: o(['milo', 'Grain sorghum / milo'], ['sunflower', 'Sunflower'], ['millet', 'Proso millet'], ['browntop', 'Browntop millet'], ['wheat', 'Wheat'], ['native', 'Native (croton/sunflower)']), def: 'milo' },
+      { k: 'crop', label: 'Crop', t: 'select', opts: o(['milo', 'Grain sorghum / milo'], ['sunflower', 'Sunflower'], ['millet', 'Proso millet'], ['browntop', 'Browntop millet'], ['wheat', 'Wheat'], ['croton', 'Croton / dove weed (seeded)'], ['native', 'Native, disk only (croton/sunflower)']), def: 'milo' },
       { k: 'hybrid', label: 'Hybrid / variety', t: 'text' },
       { k: 'plantMethod', label: 'Planted by', t: 'select', opts: o(['broadcast', 'Broadcast'], ['drilled', 'Drilled / planter']), def: 'broadcast', show: (r) => r.crop !== 'native' },
       { k: 'plantDate', label: 'Planting date', t: 'date' },
-      { k: 'daysToMaturity', label: 'Days to maturity', t: 'num', help: 'From the seed tag. Blank = typical for the crop.', show: (r) => r.crop !== 'native' },
+      { k: 'daysToMaturity', label: 'Days to maturity', t: 'num', help: 'From the seed tag. Blank = typical for the crop.', show: (r) => !['native', 'croton'].includes(r.crop) },
       { k: 'seedRate', label: 'Seeding rate (lb/ac)', t: 'num', help: 'Stay within the Texas A&M AgriLife rate shown on the Dove fields page. That is what makes it a normal agricultural planting.', show: (r) => r.crop !== 'native' },
       loc, notes,
     ],

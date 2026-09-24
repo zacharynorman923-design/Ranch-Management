@@ -180,9 +180,10 @@ function doveRecsPanel(opener) {
         <td class="num">${b.rate ? `${b.rate[0]}–${b.rate[1]}` : '—'}</td>
         <td class="num">${d.rate ? `${d.rate[0]}–${d.rate[1]}` : '—'}</td>
         <td class="nowrap">${md(b.window[0])} – ${md(b.window[1])}</td>
-        <td class="num">${c.days ? `${c.days[0]}–${c.days[1]}` : '—'}</td>
-        <td class="nowrap">${c.key === 'wheat' ? 'previous fall' : b.plantBy ? `<b>${md(b.plantBy)}</b>` : '—'}</td></tr>`).join('')}</tbody>
+        <td class="num">${c.days ? `${c.days[0]}–${c.days[1]}` : c.seedNote ? `<span class="nowrap">${esc(c.seedNote)}</span>` : '—'}</td>
+        <td class="nowrap">${c.key === 'wheat' ? 'previous fall' : b.plantBy ? `<b>${md(b.plantBy)}</b>${c.agrilife === false ? '*' : ''}` : '—'}</td></tr>`).join('')}</tbody>
     </table></div>
+    <p class="small muted">* Croton isn't in AgriLife's dove table. Its rate comes from native-seed suppliers, and its timing from its biology: it needs a winter to germinate, and it drops seed from August until frost.</p>
     <details class="lines"><summary>Tips per crop</summary>
       <ul class="plain small" style="margin-top:8px">${C.DOVE_CROPS.map((c) => `<li>• <b>${esc(c.label)}:</b> ${esc(c.tip)}</li>`).join('')}</ul>
     </details>
@@ -223,11 +224,11 @@ export function dove() {
         const fOpener = f.plantDate ? `${C.yearOf(f.plantDate) + (f.crop === 'wheat' && C.monthOf(f.plantDate) >= 9 ? 1 : 0)}-${s.opener}` : opener;
         const adv = C.doveCropAdvice(f.crop, { opener: fOpener, method: f.plantMethod || 'broadcast', acres: f.acres, plantDate: f.plantDate, seedRate: f.seedRate });
         const days = f.daysToMaturity || adv?.daysMid || 100;
-        const sch = f.plantDate && f.crop !== 'native' ? C.doveSchedule({ plantDate: f.plantDate, daysToMaturity: days, opener: fOpener }) : null;
+        const sch = f.plantDate && adv?.crop.days ? C.doveSchedule({ plantDate: f.plantDate, daysToMaturity: days, opener: fOpener }) : null;
         return `<div class="dove-field">
           <div class="card-head"><b>${esc(f.name)}</b> <small>${esc(adv?.crop.label || f.crop || '')} · ${esc(f.acres || '?')} ac</small> <button class="btn sm link" data-edit="dovefields:${esc(f.id)}">Edit</button></div>
           ${adv ? `<div class="advice">
-            <div><b>Texas A&amp;M AgriLife:</b> ${adv.rate ? `${adv.rate[0]}–${adv.rate[1]} lb/ac ${adv.method}${adv.seedLbs ? ` → <b>${adv.seedLbs[0]}–${adv.seedLbs[1]} lb of seed</b> for ${esc(f.acres)} ac` : ''}. ` : ''}Plant ${dateLabel(adv.window[0]).replace(/, \d{4}$/, '')} – ${dateLabel(adv.window[1]).replace(/, \d{4}$/, '')}${adv.plantBy ? `; for the ${dateLabel(fOpener).replace(/, \d{4}$/, '')} opener plant by <b>${dateLabel(adv.plantBy)}</b>` : ''}.</div>
+            <div><b>${adv.crop.agrilife === false ? 'Recommended' : 'Texas A&amp;M AgriLife'}:</b> ${adv.rate ? `${adv.rate[0]}–${adv.rate[1]} lb/ac ${adv.method}${adv.seedLbs ? ` → <b>${adv.seedLbs[0]}–${adv.seedLbs[1]} lb of seed</b> for ${esc(f.acres)} ac` : ''}. ` : ''}Plant ${dateLabel(adv.window[0]).replace(/, \d{4}$/, '')} – ${dateLabel(adv.window[1]).replace(/, \d{4}$/, '')}${adv.plantBy ? `; for the ${dateLabel(fOpener).replace(/, \d{4}$/, '')} opener plant by <b>${dateLabel(adv.plantBy)}</b>` : ''}.</div>
             ${adv.checks.map((c) => `<div class="${c.ok ? 'ok-t' : 'warn-t'}">${c.ok ? '✓' : '⚠'} ${esc(c.text)}</div>`).join('')}
             ${f.seedRate === '' || f.seedRate == null ? (adv.rate ? '<div class="muted small">Add your seeding rate (Edit) to check it against the recommendation.</div>' : '') : ''}
           </div>` : ''}
@@ -238,6 +239,7 @@ export function dove() {
             <li><span>${dateLabel(`${C.yearOf(f.plantDate)}-${s.opener}`)}</span> <b>Opener</b></li>
           </ul>
           <p class="note ${sch.status === 'ok' ? '' : 'warn'}">${esc(sch.msg)} Latest planting date for this hybrid: ${dateLabel(sch.latestPlant)}.</p>`
+          : adv && !adv.crop.days ? `<p class="note">${esc(adv.crop.tip)}</p>`
           : `<p class="note">No planting date yet. For a ${dateLabel(opener)} opener with a 100-day milo, plant by ${dateLabel(C.addDays(opener, -121))}.</p>`}
         </div>`;
       }).join('') : `<p class="empty">Add a dove field. For a ${dateLabel(opener)} opener with a 100-day milo, plant by ${dateLabel(C.addDays(opener, -121))}.</p>`}

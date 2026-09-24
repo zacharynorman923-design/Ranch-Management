@@ -305,3 +305,16 @@ test('AgriLife dove crop advice: rates, drilled at half, windows, plant-by', () 
   assert.ok(good.checks.every((c) => c.ok));
   assert.equal(C.doveCropAdvice('native', { opener: '2027-09-01' }).rate, null);
 });
+
+test('croton: winter sowing window across the new year, supplier rate', () => {
+  const c = C.doveCropAdvice('croton', { opener: '2027-09-01', acres: 10, plantDate: '2027-01-15', seedRate: 4 });
+  assert.deepEqual(c.rate, [3, 5]);
+  assert.deepEqual(c.window, ['2026-12-01', '2027-03-31']);
+  assert.equal(c.plantBy, '2027-03-31');
+  assert.deepEqual(c.seedLbs, [30, 50]);
+  assert.ok(c.checks.every((x) => x.ok));
+  const late = C.doveCropAdvice('croton', { opener: '2027-09-01', plantDate: '2027-06-01', seedRate: 20 });
+  assert.equal(late.checks.filter((x) => !x.ok).length, 2);
+  assert.match(late.checks[0].text, /recommended window/);
+  assert.deepEqual(C.doveCropAdvice('native', { opener: '2027-09-01' }).window, ['2026-12-01', '2027-02-28']);
+});
