@@ -9,6 +9,40 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const monthName = (ym) => MONTHS[Number(ym.slice(5, 7)) - 1];
 
 /* --------------------------------- rain ---------------------------------- */
+const MASON_TOWN = { lat: 30.7488, lon: -99.2303 };
+/** Where the rain numbers come from, and how much to trust them. */
+function rainSourcePanel(s, t) {
+  const mix = C.rainSourceMix(db.all('rain'), t);
+  const loc = s.relayInfo?.location;
+  const isTown = loc && Math.abs(loc.lat - MASON_TOWN.lat) < 0.001 && Math.abs(loc.lon - MASON_TOWN.lon) < 0.001;
+  const rows = [
+    ['gauge', 'Your rain gauge (automatic)', 'Measured at the gauge. The most accurate source.'],
+    ['estimate', 'Weather-model estimate (automatic)', loc ? `Computed for ${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}${isTown ? ' — <b>Mason town, not your place</b>' : ''}.` : 'Computed by the relay for the ranch coordinates.'],
+    ['manual', 'Logged by hand', 'Readings you typed in. These replace the automatic reading for that day.'],
+    ['sample', 'Sample ranch data', 'Made-up numbers from “Load sample ranch”.'],
+  ].filter(([k]) => mix[k].days > 0);
+  const total = Object.values(mix).reduce((a, x) => a + x.inches, 0);
+  let verdict;
+  if (mix.sample.days) verdict = `<p class="note warn"><b>Sample data is mixed into your rain.</b> It changes every total above. Remove it under <a href="#/settings">Settings → Remove sample data</a>.</p>`;
+  else if (mix.gauge.days && !mix.estimate.days) verdict = '<p class="note">All automatic rain comes from your gauge. ✓</p>';
+  else if (mix.estimate.days) verdict = `<p class="note">These are <b>estimates, not measurements</b>. They come from a weather model's rainfall for a grid square a few miles across. They're good for 12-month trends like stocking decisions, but a single thunderstorm can be off by half or more because Hill Country storms are patchy. ${isTown ? 'The relay is estimating for Mason town. Set <code>RANCH_LAT</code> / <code>RANCH_LON</code> to your pasture (see relay/README) so it estimates for your place. ' : ''}A gauge on the place replaces these day by day.</p>`;
+  else if (!rows.length) verdict = '<p class="note">No rain recorded in the last 12 months.</p>';
+  else verdict = '<p class="note">All rain here was logged by hand.</p>';
+  return `<section class="panel">
+    <div class="panel-head"><h2>Where these numbers come from</h2>${mix.sample.days ? pill('sample data mixed in', 'bad') : mix.estimate.days > mix.gauge.days + mix.manual.days ? pill('mostly estimated', 'warn') : rows.length ? pill('measured', 'good') : ''}</div>
+    ${rows.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Source · last 12 months</th><th>Days</th><th>Inches</th><th>Share</th></tr></thead><tbody>
+      ${rows.map(([k, label, help]) => `<tr><td><b>${label}</b><br><small class="muted">${help}</small></td><td class="num">${mix[k].days}</td><td class="num">${n2(mix[k].inches)}″</td><td class="num">${total ? pct(mix[k].inches / total) : '—'}</td></tr>`).join('')}
+    </tbody></table></div>` : ''}
+    ${verdict}
+    <details class="lines"><summary>How to check the numbers</summary>
+      <ul class="plain small" style="margin-top:8px">
+        <li>• Put a plain 4-inch plastic rain gauge (the kind CoCoRaHS volunteers use) by the house, and log it by hand a few times after storms. Compare with the automatic value for the same day.</li>
+        <li>• Compare monthly totals with the CoCoRaHS volunteer reports for Mason County at cocorahs.org (Maps → Texas).</li>
+        <li>• The long-term <b>normal</b> in the chart comes from Settings → Rain normals. Those are the approximate Mason averages, not your rainfall.</li>
+      </ul>
+    </details>
+  </section>`;
+}
 export function rain() {
   const s = S();
   const t = C.today();
@@ -29,6 +63,7 @@ export function rain() {
       ${w.missing.length ? `<p class="note warn">No readings for ${w.missing.map(monthName).join(', ')}. Those months are left out of the % of normal rather than counted as zero — log <b>0.00</b> if it really didn't rain.</p>` : ''}
       <p class="note">Trailing-12-month rain feeds the <a href="#/stocking">stocking calculator</a>.</p>
     </section>
+    ${rainSourcePanel(s, t)}
     ${listPanel('rain', {
       title: 'Gauge readings',
       rows: db.all('rain').filter((r) => !(r.auto && !(Number(r.inches) > 0))),

@@ -67,6 +67,8 @@ export default {
           ambient: !!(env.AMBIENT_API_KEY && env.AMBIENT_APPLICATION_KEY),
           estimate: !!(env.RANCH_LAT && env.RANCH_LON),
         },
+        // Where the weather-model estimate is computed. 30.7488, -99.2303 is Mason town (the default).
+        location: { lat: Number(env.RANCH_LAT), lon: Number(env.RANCH_LON), tz: env.RANCH_TZ || 'America/Chicago' },
       });
     }
     if (p === '/rain') {

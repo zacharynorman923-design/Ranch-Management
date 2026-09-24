@@ -242,3 +242,17 @@ test('seasonal template has deer openers on Saturdays', () => {
   assert.ok(t.find((x) => x.date === '2026-10-03' && /Archery/.test(x.title)));
   assert.ok(t.every((x, i) => i === 0 || t[i - 1].date <= x.date));
 });
+
+test('rain source mix separates gauge, estimate, hand-logged and sample', () => {
+  const r = [
+    { date: '2026-09-01', inches: 1, auto: true, gauge: 'Rain gauge (auto)' },
+    { date: '2026-09-02', inches: 0.5, auto: true, gauge: 'Weather-model estimate (auto)' },
+    { date: '2026-09-03', inches: 0.25, gauge: 'HQ' },
+    { date: '2026-09-04', inches: 2, gauge: 'Headquarters', sample: true },
+    { date: '2024-01-01', inches: 9, auto: true, gauge: 'Weather-model estimate (auto)' },
+  ];
+  const m = C.rainSourceMix(r, '2026-09-15');
+  assert.deepEqual([m.gauge.days, m.estimate.days, m.manual.days, m.sample.days], [1, 1, 1, 1]);
+  near(m.estimate.inches, 0.5);
+  assert.equal(C.rainSource(r[3]), 'sample');
+});
