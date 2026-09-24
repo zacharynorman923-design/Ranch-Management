@@ -243,7 +243,15 @@ textarea { resize: vertical; }
 .field.check input { width: 18px; height: 18px; accent-color: var(--accent); }
 .help { font-weight: 400; color: var(--muted); font-size: 12px; }
 .req { color: var(--bad); }
-.loc-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
+.loc-row { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px; }
+@media (max-width: 420px) { .loc-row { grid-template-columns: 1fr 1fr; } }
+dialog.map-sheet { max-width: 900px; }
+.map-sheet .sheet-form { height: 92vh; height: 92dvh; max-height: none; }
+.pin-body { grid-template-columns: 1fr; }
+.pin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.pin-grid .btn { justify-content: flex-start; min-height: 46px; white-space: normal; text-align: left; }
+.map-pick { flex: 1; min-height: 240px; }
+.map-sheet .sheet-foot { flex-wrap: wrap; align-items: center; }
 .thumbs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .thumb-wrap { position: relative; }
 .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; display: block; background: var(--panel-2); }

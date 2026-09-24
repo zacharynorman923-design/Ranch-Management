@@ -137,6 +137,12 @@ export function openForm(col, rec = null, preset = {}) {
           render();
         } catch (err) { toast(`No GPS fix: ${err.message}`); }
       }
+      if (t.hasAttribute('data-pickmap')) {
+        read();
+        const { pickOnMap } = await import('./mappick.js');
+        const spot = await pickOnMap({ initial: state[t.dataset.pickmap], title: `Where is this ${def.label.toLowerCase()}?` });
+        if (spot) { state[t.dataset.pickmap] = spot; render(); }
+      }
       if (t.hasAttribute('data-unlink')) { read(); state.photos = state.photos.filter((x) => x !== t.dataset.unlink); render(); }
       if (t.hasAttribute('data-del') && confirm(`Delete this ${def.label.toLowerCase()}?`)) {
         await db.del(col, rec.id);
@@ -186,7 +192,8 @@ function fieldHTML(f, s) {
       return `<div class="field wide">${lab}<div class="loc-row">
         <input name="${f.k}.lat" inputmode="decimal" placeholder="Latitude" value="${esc(v?.lat ?? '')}">
         <input name="${f.k}.lon" inputmode="decimal" placeholder="Longitude" value="${esc(v?.lon ?? '')}">
-        <button type="button" class="btn" data-gps="${f.k}">📍 Here</button></div>${help}</div>`;
+        <button type="button" class="btn" data-gps="${f.k}">📍 Here</button>
+        <button type="button" class="btn" data-pickmap="${f.k}">🗺 Map</button></div>${help}</div>`;
     case 'photos':
       return `<div class="field wide">${lab}<div class="thumbs">
         ${(s.photos || []).map((pid) => `<span class="thumb-wrap"><img class="thumb" data-pid="${esc(pid)}" alt=""><button type="button" class="icon-btn sm" data-unlink="${esc(pid)}" aria-label="Remove">✕</button></span>`).join('')}
