@@ -85,6 +85,25 @@ export function rainWindow(readings, normals, asOf, months = 12) {
 }
 const monthDay = (iso) => Number(iso.slice(8, 10));
 
+/** Where a rain record came from: 'gauge' | 'estimate' (relay) | 'sample' | 'manual'. */
+export function rainSource(r) {
+  if (r.sample) return 'sample';
+  if (r.auto) return /gauge/i.test(r.gauge || '') ? 'gauge' : 'estimate';
+  return 'manual';
+}
+/** Days and inches by source over the trailing `months` months (same window as rainWindow). */
+export function rainSourceMix(readings, asOf, months = 12) {
+  const start = `${shiftYM(ymOf(asOf), -(months - 1))}-01`;
+  const out = { gauge: { days: 0, inches: 0 }, estimate: { days: 0, inches: 0 }, manual: { days: 0, inches: 0 }, sample: { days: 0, inches: 0 } };
+  for (const r of readings) {
+    if (!r.date || r.date < start || r.date > asOf) continue;
+    const o = out[rainSource(r)];
+    o.days++;
+    o.inches += num(r.inches);
+  }
+  return out;
+}
+
 /** Calendar-year monthly totals: [{m, actual|null, normal}] for 12 months. */
 export function rainByMonth(readings, normals, year) {
   const out = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, actual: null, normal: num(normals[i]) }));

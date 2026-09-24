@@ -66,7 +66,8 @@ async function doSync() {
 
   // --- rain ---------------------------------------------------------------
   try {
-    await call('/status'); // fail fast (once) on a wrong address or token
+    const st = await call('/status'); // fail fast (once) on a wrong address or token
+    await db.saveSettings({ relayInfo: { sources: st.sources || {}, location: st.location || null } });
     const since = s.relayRainSynced ? C.addDays(s.relayRainSynced, -14) : '1900-01-01';
     const rows = await call(`/rain?since=${since}`);
     const plan = planRainImport(rows, db.all('rain'));

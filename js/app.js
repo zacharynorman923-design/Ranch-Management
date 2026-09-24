@@ -102,7 +102,7 @@ function dashboard() {
   const kpiNow = C.calfCropKPIs(db.all('animals'), db.all('events'), C.yearOf(t));
   const kpi = kpiNow.weaned ? kpiNow : C.calfCropKPIs(db.all('animals'), db.all('events'), C.yearOf(t) - 1);
   const pl = C.enterprisePL(C.yearOf(t), { ledger: db.all('ledger'), sales: db.all('events').filter((e) => e.type === 'sale'), animals: db.all('animals'), leases: db.all('leases') });
-  const lastRain = db.all('rain').sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const lastRain = db.all('rain').filter((r) => Number(r.inches) > 0).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   const tone = st.status.state === 'over' ? 'bad' : st.status.state === 'full' ? 'warn' : 'good';
   const empty = !db.all('animals').length && !db.all('rain').length;
   return `
@@ -116,7 +116,7 @@ function dashboard() {
       <div class="panel-head"><h2>${esc(s.ranchName)}</h2><span class="muted small">${s.acres} ac · ${esc(s.county)} County</span></div>
       <div class="stats">
         <a href="#/stocking">${stat('Stocking', `${n1(st.herd.au)} / ${st.cap.head}`, st.status.msg, tone)}</a>
-        <a href="#/rain">${stat('Rain, 12 mo', st.rain.ratio == null ? '—' : pct(st.rain.ratio), lastRain ? `last: ${lastRain.inches}″ on ${lastRain.date}` : 'no readings', st.rain.ratio != null && st.rain.ratio < 0.75 ? 'warn' : '')}</a>
+        <a href="#/rain">${stat('Rain, 12 mo', st.rain.ratio == null ? '—' : pct(st.rain.ratio), rainSub(lastRain), st.rain.ratio != null && st.rain.ratio < 0.75 ? 'warn' : '')}</a>
         <a href="#/herd">${stat('Lb weaned / exposed', kpi.lbsPerExposed == null ? '—' : n0(kpi.lbsPerExposed), `${kpi.crop} calf crop`)}</a>
         <a href="#/census">${stat('Acres per deer', census ? n1(census.acresPerDeer) : '—', census ? `~${n0(census.population)} deer (${census.year})` : 'no census')}</a>
         <a href="#/valuation">${stat('Wildlife practices', `${cov.met}/7`, s.valuation === 'wildlife' ? (cov.ok ? '3-of-7 met' : 'need 3') : 'ag valuation', s.valuation === 'wildlife' && !cov.ok ? 'bad' : '')}</a>
@@ -141,6 +141,12 @@ function dashboard() {
         <a class="btn" href="#/settings">⚙︎ Settings</a>
       </div>
     </section>`;
+}
+function rainSub(lastRain) {
+  const mix = C.rainSourceMix(db.all('rain'), C.today());
+  const src = mix.sample.days ? 'includes SAMPLE data' : mix.estimate.days > mix.gauge.days + mix.manual.days ? 'estimated, not measured' : null;
+  const last = lastRain ? `last: ${lastRain.inches}″ on ${lastRain.date}` : 'no readings';
+  return src ? `${last} · ${src}` : last;
 }
 function bindDashboard(el) {
   el.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => openForm(b.dataset.q)));

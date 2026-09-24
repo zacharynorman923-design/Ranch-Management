@@ -25,7 +25,7 @@ export const COLLECTIONS = {
     fields: [
       { k: 'date', label: 'Date', t: 'date', req: 1, def: today },
       { k: 'inches', label: 'Inches', t: 'num', step: 0.01, req: 1, help: 'Log 0.00 for a dry month so it isn’t counted as missing.' },
-      { k: 'gauge', label: 'Gauge', t: 'text', def: () => db.settings().defaultGauge || 'Headquarters' },
+      { k: 'gauge', label: 'Gauge / source', t: 'text', def: () => db.settings().defaultGauge || 'Headquarters' },
       notes,
     ],
     cols: ['date', 'inches', 'gauge', 'notes'],
