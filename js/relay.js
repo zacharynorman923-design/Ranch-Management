@@ -123,6 +123,7 @@ async function doSync() {
               device: dev?.id || '',
               loc: p.lat != null ? { lat: p.lat, lon: p.lon } : dev?.loc || null,
               temp: p.temp ?? '', moon: p.moon || '',
+              aiTags: p.ai_tags || '', aiSummary: p.ai_summary || '',
             });
             out.photos++;
           }
@@ -131,6 +132,24 @@ async function doSync() {
         await db.saveSettings({ relayPhotoCursor: cursor });
       }
     } catch (err) { out.errors.push(`Photos: ${err.message}`); }
+  }
+
+  // AI labels that finished after their photo was already on this phone.
+  if (s.relayPhotos !== false) {
+    try {
+      const since = db.settings().relayLabelCursor || '1970-01-01';
+      const rows = await call(`/labels?since=${encodeURIComponent(since)}`);
+      const writes = [];
+      let cursor = since;
+      for (const r of rows) {
+        cursor = r.updated > cursor ? r.updated : cursor;
+        const ph = db.get('photos', `reveal-${r.id}`);
+        if (ph && (ph.aiTags !== (r.tags || '') || ph.aiSummary !== (r.summary || ''))) writes.push({ ...ph, aiTags: r.tags || '', aiSummary: r.summary || '' });
+      }
+      if (writes.length) await db.putMany('photos', writes);
+      out.labels = writes.length;
+      await db.saveSettings({ relayLabelCursor: cursor });
+    } catch (err) { out.errors.push(`Labels: ${err.message}`); }
   }
 
   await prunePhotos();
@@ -147,7 +166,10 @@ export async function prunePhotos() {
   if (!(keep > 0)) return 0;
   const cutoff = C.addDays(C.today(), -keep);
   const { deletePhoto } = await import('./photos.js');
-  const old = db.all('photos').filter((p) => p.source === 'reveal' && p.date && p.date < cutoff && !String(p.tags || '').trim() && !p.packet);
+  // Frames the classifier called empty (wind, grass) go after 3 days.
+  const emptyCutoff = C.addDays(C.today(), -3);
+  const old = db.all('photos').filter((p) => p.source === 'reveal' && p.date && !String(p.tags || '').trim() && !p.packet
+    && (p.date < cutoff || (p.aiTags === 'empty' && p.date < emptyCutoff)));
   for (const p of old) await deletePhoto(p.id);
   return old.length;
 }

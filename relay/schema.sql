@@ -42,3 +42,16 @@ CREATE TABLE IF NOT EXISTS kv (
   k TEXT PRIMARY KEY,
   v TEXT
 );
+-- AI labels for camera photos (filled by the classifier when ANTHROPIC_API_KEY is set).
+CREATE TABLE IF NOT EXISTS photo_labels (
+  id       TEXT PRIMARY KEY,               -- photos.id
+  url      TEXT,                           -- Tactacam's presigned URL (valid ~7 days)
+  status   TEXT NOT NULL DEFAULT 'pending',-- pending | done | error | skipped
+  attempts INTEGER NOT NULL DEFAULT 0,
+  tags     TEXT,                           -- comma-separated: buck, doe, hog, predator, person…
+  summary  TEXT,                           -- one line, e.g. "2 does and a fawn at the feeder"
+  labels   TEXT,                           -- full JSON result
+  model    TEXT,
+  updated  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS photo_labels_status ON photo_labels(status, updated);

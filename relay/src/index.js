@@ -10,12 +10,14 @@
      GET  /cameras                [{id, name, battery, signal, lat, lon, last_photo}]
      GET  /photos?after=SEQ       [{seq, id, camera_id, camera, taken, …}] (50 max)
      GET  /photo/:id              the JPEG
+     GET  /labels?since=ISO       AI labels finished since a time
      POST /run                    run every poll now (for setup/testing)
    ========================================================================= */
 import { safeEqual } from './lib.js';
 import { kvGet, kvSet } from './store.js';
 import { pollRain } from './rain.js';
 import { pollTactacam, prunePhotos } from './tactacam.js';
+import { classifyPending } from './classify.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -38,6 +40,7 @@ async function step(env, name, fn) {
 async function runAll(env, { rain = true } = {}) {
   const out = {};
   out.cameras = await step(env, 'cameras', () => pollTactacam(env));
+  out.labels = await step(env, 'labels', () => classifyPending(env));
   if (rain) out.rain = await step(env, 'rain', () => pollRain(env));
   await prunePhotos(env).catch(() => {});
   return out;
@@ -66,6 +69,7 @@ export default {
           tactacam: !!(env.TACTACAM_EMAIL && env.TACTACAM_PASSWORD),
           ambient: !!(env.AMBIENT_API_KEY && env.AMBIENT_APPLICATION_KEY),
           estimate: !!(env.RANCH_LAT && env.RANCH_LON),
+          classifier: env.ANTHROPIC_API_KEY ? (env.CLASSIFIER_MODEL || 'claude-opus-5') : false,
         },
         // Where the weather-model estimate is computed. 30.7488, -99.2303 is Mason town (the default).
         location: { lat: Number(env.RANCH_LAT), lon: Number(env.RANCH_LON), tz: env.RANCH_TZ || 'America/Chicago' },
@@ -83,9 +87,17 @@ export default {
     if (p === '/photos') {
       const after = Number(url.searchParams.get('after')) || 0;
       const limit = Math.min(50, Number(url.searchParams.get('limit')) || 50);
-      const { results } = await env.DB.prepare(`SELECT seq, id, camera_id, camera, taken, lat, lon, temp, moon, battery, signal, bytes
-        FROM photos WHERE seq > ?1 ORDER BY seq LIMIT ?2`).bind(after, limit).all();
+      const { results } = await env.DB.prepare(`SELECT p.seq, p.id, p.camera_id, p.camera, p.taken, p.lat, p.lon, p.temp, p.moon, p.battery, p.signal, p.bytes,
+          CASE WHEN l.status = 'done' THEN l.tags END AS ai_tags, CASE WHEN l.status = 'done' THEN l.summary END AS ai_summary
+        FROM photos p LEFT JOIN photo_labels l ON l.id = p.id WHERE p.seq > ?1 ORDER BY p.seq LIMIT ?2`).bind(after, limit).all();
       return json(results);
+    }
+    if (p === '/labels') {
+      // Labels finished after `since` — for photos the app already downloaded unlabeled.
+      const since = url.searchParams.get('since') || '1970-01-01';
+      const { results } = await env.DB.prepare(`SELECT id, tags, summary, labels, updated FROM photo_labels
+        WHERE status = 'done' AND updated > ?1 ORDER BY updated LIMIT 500`).bind(since).all();
+      return json(results.map((r) => ({ ...r, labels: r.labels ? JSON.parse(r.labels) : null })));
     }
     const m = p.match(/^\/photo\/(.+)$/);
     if (m) {

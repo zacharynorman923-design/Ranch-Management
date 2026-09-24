@@ -5,6 +5,7 @@
   "description": "Offline-first ranch records for a Mason County, TX cattle / deer / dove place.",
   "type": "module",
   "scripts": {
+    "pretest": "npm install --prefix relay --no-audit --no-fund --silent",
     "test": "node --no-warnings --test test/*.test.js",
     "start": "python3 -m http.server 8080"
   }
