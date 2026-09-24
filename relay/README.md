@@ -16,48 +16,96 @@ minutes while open, and when signal comes back. Rain goes into the rain log
 marked *(auto)*. Photos go into the photo log, tied to the right camera.
 Cameras show up under Cams & feeders on their own.
 
-## One-time setup (about 15 minutes, all from a browser)
+## One-time setup (about 20 minutes, all in a phone or computer browser)
 
-You'll set up three things: a Cloudflare account, a few GitHub secrets, then
-one button press.
+The **API token** in part B is something you create yourself inside
+Cloudflare. It's a password that lets GitHub install the relay into your
+Cloudflare account.
 
-### 1. Cloudflare
-1. Sign up at <https://dash.cloudflare.com/sign-up>. The free plan is enough.
-2. Open **Workers & Pages** once, so Cloudflare creates your `workers.dev`
-   subdomain. Accept the name it suggests or pick one.
-3. Copy your **Account ID**. It's in the right-hand column of the Workers &
-   Pages overview (or in the URL: `dash.cloudflare.com/<account id>/…`).
-4. Create an **API token**: profile icon → *My Profile* → *API Tokens* →
-   *Create Token* → template **"Edit Cloudflare Workers"**. Under
-   *Permissions*, add **Account → D1 → Edit**. Create it and copy the token.
+### A. Merge the relay into `main`
+The deploy button only exists once this code is on `main`. If it isn't yet,
+open the pull request that adds `relay/` and tap **Merge pull request**, then
+**Confirm merge**.
 
-### 2. GitHub secrets
-In this repo, go to **Settings → Secrets and variables → Actions → New
-repository secret** and add:
+### B. Cloudflare: account, Account ID, API token
+1. Sign up at <https://dash.cloudflare.com/sign-up> (free) and confirm your email.
+2. In the left menu, open **Compute (Workers) → Workers & Pages** (older
+   screens just say **Workers & Pages**). If it asks you to pick a
+   `workers.dev` subdomain, accept the suggestion. The relay's web address
+   will end in it.
+3. **Account ID:** look at the address bar. It reads
+   `dash.cloudflare.com/`**`a1b2c3…`**`/…`. That 32-character string is your
+   Account ID. It's also shown as *Account ID* on the right of the Workers &
+   Pages overview. Copy it into a note.
+4. **API token:**
+   1. Go to <https://dash.cloudflare.com/profile/api-tokens> (profile icon at
+      top right → **My Profile** → **API Tokens**).
+   2. Tap **Create Token**.
+   3. Next to **Edit Cloudflare Workers**, tap **Use template**.
+   4. Under **Permissions**, tap **+ Add more** and set the new row to
+      **Account** · **D1** · **Edit**. The relay's database needs this, and
+      the template leaves it out.
+   5. **Account Resources**: *Include* → your account. **Zone Resources**:
+      *Include* → **All zones** (you have none, which is fine).
+   6. Tap **Continue to summary** → **Create Token**.
+   7. **Copy the token now.** Cloudflare shows it only once. If you lose it,
+      delete it and make another.
 
-| Secret | Value |
+### C. Make your relay password
+Make up a long random string, 30+ characters. Your phone's password generator
+works well; on iPhone, use the Passwords app, **+**, and copy the suggested
+password. This is your `RELAY_TOKEN`. Save it in a note; you'll paste it
+twice.
+
+### D. Put the secrets in GitHub
+Open **Settings → Secrets and variables → Actions → New repository secret**
+(<https://github.com/zacharynorman923-design/Ranch-Management/settings/secrets/actions/new>).
+Add each secret below one at a time: type the **Name** exactly as shown, paste
+the **Secret**, and tap **Add secret**.
+
+| Name | Secret |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | the token from step 1.4 |
-| `CLOUDFLARE_ACCOUNT_ID` | the ID from step 1.3 |
-| `RELAY_TOKEN` | a long random password you make up (e.g. from your phone's password generator). You'll paste the same value into the app. |
-| `TACTACAM_EMAIL` | your Tactacam Reveal login email |
-| `TACTACAM_PASSWORD` | your Tactacam Reveal password |
+| `CLOUDFLARE_API_TOKEN` | token from B.4 |
+| `CLOUDFLARE_ACCOUNT_ID` | ID from B.3 |
+| `RELAY_TOKEN` | password from C |
+| `TACTACAM_EMAIL` | the email you use for the Reveal app |
+| `TACTACAM_PASSWORD` | your Reveal password |
 
-Secrets are encrypted. They aren't visible in this public repo or its logs,
-and they're passed straight to Cloudflare.
+Secrets are encrypted. They can't be read back, even by you, and never appear
+in this public repo or its logs.
 
-**Optional:** on the *Variables* tab, set `RANCH_LAT` and `RANCH_LON` to the
-middle of your place (long-press it in Google/Apple Maps). This makes the rain
-estimate land on your pastures instead of Mason town.
+**Optional, recommended:** switch to the **Variables** tab → **New repository
+variable** and add `RANCH_LAT` and `RANCH_LON` for the middle of your place.
+In Apple or Google Maps, drop a pin there; the coordinates look like
+`30.7488, -99.2303`. The first number is LAT, the second is LON, with its
+minus sign. This puts the rain estimate on your pastures instead of Mason
+town.
 
-### 3. Deploy
-**Actions** tab → **Deploy relay** → **Run workflow**. When it finishes, open
-the *Deploy the Worker* step and copy the address it printed, e.g.
-`https://ranch-relay.<your-subdomain>.workers.dev`.
+### E. Deploy
+1. Open the repo's **Actions** tab → **Deploy relay** (left list) →
+   **Run workflow** → **Run workflow**.
+2. Wait about 1–2 minutes for a green check. Tap the run, then **deploy**, then
+   expand the **Deploy the Worker** step. Near the bottom is an address like
+   `https://ranch-relay.<your-subdomain>.workers.dev`. Copy it.
+   - A red ❌ in the **Store secrets** step means the `RELAY_TOKEN` secret is
+     missing.
+   - A red ❌ that mentions *Authentication* means the Cloudflare token is
+     wrong or missing **D1 · Edit**. Redo B.4, update the secret, and run
+     again.
 
-### 4. Connect the app
-In the app: **Settings → Automatic data (relay)**. Paste the address and your
-`RELAY_TOKEN`, then tap **Check relay**, then **Sync now**.
+### F. Connect the app
+In the installed app, go to **☰ → Settings → Automatic data (relay)**:
+1. **Relay address:** paste the address from E.2.
+2. **Relay token:** paste your password from C.
+3. Tap **Check relay**. You should see `"ok": true` for rain and for cameras.
+   - A camera error such as *Incorrect username or password* means the
+     Tactacam secrets need fixing.
+4. Tap **Sync now**. About a year of rain appears in the rain log, your
+   cameras appear under **Cams & feeders**, and the last 3 days of photos
+   appear in the **Photo log**.
+
+After this you never touch it again. The relay runs by itself, and the app
+syncs whenever it has signal.
 
 ## Adding a rain gauge later
 1. Get an **Ambient Weather** station that reports to AmbientWeather.net (see
