@@ -142,15 +142,26 @@ figures are:
 Labels are a first pass. They can mis-sex a doe at night or miss an animal at
 the edge of the frame, and a correction you tap in the app always wins.
 
-## Adding a rain gauge later
+## Connecting an Ambient Weather station
 1. Get an **Ambient Weather** station that reports to AmbientWeather.net (see
    the recommendation below).
-2. At <https://ambientweather.net/account/keys>, create an **API key** and an
-   **Application key**.
+2. At <https://ambientweather.net/account>, scroll down to **API Keys** and
+   tap **Create API Key**. Under it, the small "Developers: An Application Key
+   is also required… Click here" link creates the **Application key**. (Use a
+   computer, or the desktop site on a phone.)
 3. Add them as repository secrets `AMBIENT_API_KEY` and
    `AMBIENT_APPLICATION_KEY`, then run **Deploy relay** again.
 
-From then on, each day's gauge total replaces the model estimate for that day.
+From then on the relay reads **every sensor** the station reports:
+- every 15 minutes, current conditions (temperature, humidity, wind, rain,
+  pressure, sun/UV, lightning, soil and extra sensors, batteries);
+- every hour, the last 24 hours of 5-minute readings, rolled up into a daily
+  high / low / average per sensor. It also works back through up to a year of
+  past records (`WX_BACKFILL_DAYS`, a few days per hour).
+
+The app shows all of it on the **Weather station** page, and each day's gauge
+total replaces the model estimate for that day in the rain log. If the account
+has more than one station, set `AMBIENT_MAC` in `wrangler.toml` to pick one.
 
 **Which gauge:** get an **Ambient Weather WS-2902-series** station, or an
 Ambient tipping-bucket rain gauge that pairs with an Ambient Wi-Fi console.

@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../relay/src/index.js';
 import * as L from '../relay/src/lib.js';
+import { pollAmbient } from '../relay/src/weather.js';
 
 /* Minimal D1 look-alike: prepare().bind().first/all/run and batch(). */
 function fakeD1() {
@@ -123,10 +124,6 @@ test('relay helpers', () => {
   // 11:30 pm Central on Sep 1 is Sep 2 in UTC but Sep 1 on the ranch.
   const late = Date.UTC(2026, 8, 2, 4, 30);
   assert.equal(L.localDate(late, 'America/Chicago'), '2026-09-01');
-  assert.deepEqual(L.ambientDailyTotals([
-    { dateutc: late, dailyrainin: 0.8 }, { dateutc: late - 3600e3, dailyrainin: 0.5 },
-    { dateutc: late + 3600e3, dailyrainin: 0.02 },
-  ], 'America/Chicago'), { '2026-09-01': 0.8, '2026-09-02': 0.02 });
   assert.deepEqual(L.openMeteoDaily({ daily: { time: ['a', 'b'], precipitation_sum: [0.123, null] } }), [{ date: 'a', inches: 0.12 }]);
   assert.equal(L.chunk(new Uint8Array(10), 4).length, 3);
   assert.ok(L.safeEqual('abc', 'abc'));
@@ -277,4 +274,64 @@ test('brush-scan: sends the photo to Claude with the density schema, caps per da
   assert.match((await capped.json()).error, /limit/);
   assert.equal((await call({ ...env, ANTHROPIC_API_KEY: '' }, '/brush-scan', { method: 'POST', body: JSON.stringify({ image }) })).status, 400);
   assert.equal((await post({ image: 'x' })).status, 400); // no usable image
+});
+
+/* ---------------------------- weather station ----------------------------- */
+test('weather: day summaries skip overlap, rain totals, direction and battery flags', () => {
+  const recs = [{ dateutc: 3, tempf: 90, dailyrainin: 0.2, winddir: 180, battout: 1 }, { dateutc: 1, tempf: 70, dailyrainin: 0 }, { dateutc: 2, tempf: 80, weeklyrainin: 5 }];
+  const { day, added } = L.wxAccumulate(null, recs);
+  assert.equal(added, 3);
+  assert.deepEqual(day.f.tempf, [70, 90, 240, 3]);
+  assert.deepEqual(Object.keys(day.f).sort(), ['dailyrainin', 'tempf']);
+  const again = L.wxAccumulate(day, [...recs, { dateutc: 4, tempf: 100 }]);
+  assert.equal(again.added, 1); // only the new record counts
+  assert.deepEqual(L.wxPublic(again.day).tempf, [70, 100, 85]);
+});
+
+test('weather: current conditions, daily history with backfill, gauge rain', { timeout: 30000 }, async (t) => {
+  const realFetch = globalThis.fetch;
+  const H = 3600e3;
+  const T = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() - 1, 18); // ~1 pm Central yesterday
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url));
+    urls.push(u.pathname + (u.searchParams.get('endDate') ? '?end' : ''));
+    const j = (x) => new Response(JSON.stringify(x));
+    if (u.pathname === '/v1/devices') return j([{ macAddress: 'AA:BB', info: { name: 'Ranch HQ' }, lastData: { dateutc: Date.now(), tempf: 88, humidity: 40, tz: 'America/Chicago' } }]);
+    const end = Number(u.searchParams.get('endDate'));
+    if (!end) return j([{ dateutc: T, tempf: 90, humidity: 30, dailyrainin: 0.2, winddir: 200 }, { dateutc: T - H, tempf: 80, humidity: 50, dailyrainin: 0.1 }, { dateutc: T - 2 * H, tempf: 70, humidity: 70, dailyrainin: 0 }]);
+    if (end === T - 2 * H) return j([{ dateutc: T - 2 * H, tempf: 70 }, { dateutc: T - 26 * H, tempf: 60, dailyrainin: 1.5 }, { dateutc: T - 27 * H, tempf: 55, dailyrainin: 1.1 }]);
+    return j([]);
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', AMBIENT_API_KEY: 'k', AMBIENT_APPLICATION_KEY: 'a', WX_BACKFILL_PER_RUN: '3' };
+
+  const out = await pollAmbient(env);
+  assert.equal(out.station, 'Ranch HQ');
+  assert.equal(out.backfill, 'done');
+  assert.equal(urls.filter((x) => x.endsWith('?end')).length, 2); // one window of history, then empty
+  const day = L.localDate(T), prev = L.localDate(T - 26 * H);
+  const feed = await (await call(env, '/weather')).json();
+  assert.equal(feed.current.data.tempf, 88);
+  assert.equal(feed.current.name, 'Ranch HQ');
+  const d = feed.days.find((x) => x.date === day);
+  assert.deepEqual(d.f.tempf, [70, 90, 80]);
+  assert.deepEqual(d.f.humidity, [30, 70, 50]);
+  assert.equal(d.f.winddir, undefined);
+  assert.deepEqual(feed.days.find((x) => x.date === prev).f.tempf, [55, 60, 57.5]);
+  const rain = await (await call(env, '/rain')).json();
+  assert.equal(rain.find((r) => r.date === day).gauge, 0.2);
+  assert.equal(rain.find((r) => r.date === prev).gauge, 1.5);
+
+  // Hourly again: same records aren't double-counted and backfill stays done.
+  urls.length = 0;
+  await pollAmbient(env);
+  assert.ok(!urls.some((x) => x.endsWith('?end')));
+  const again = (await (await call(env, '/weather')).json()).days.find((x) => x.date === day);
+  assert.deepEqual(again.f.tempf, [70, 90, 80]);
+  assert.equal((await (await call(env, '/weather?after=2999-01-01')).json()).days.length, 0);
+  // Current-only run makes one request.
+  urls.length = 0;
+  await pollAmbient(env, { history: false });
+  assert.deepEqual(urls, ['/v1/devices']);
 });

@@ -83,6 +83,8 @@ main:focus { outline: none; }
 .head-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .note { font-size: 13px; color: var(--muted); margin-top: 12px; }
 .note.warn { color: var(--warn); }
+.note.bad { color: var(--bad); }
+.note.good { color: var(--good, inherit); }
 .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
 .big { font-size: 18px; margin: 4px 0; }
 .hero ol { margin: 10px 0 14px 20px; color: var(--ink-soft); }

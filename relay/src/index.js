@@ -11,6 +11,7 @@
      GET  /photos?after=SEQ       [{seq, id, camera_id, camera, taken, …}] (50 max)
      GET  /photo/:id              the JPEG
      GET  /labels?since=ISO       AI labels finished since a time
+     GET  /weather?after=ISO      station's current readings + daily summaries changed since
      POST /run                    run every poll now (for setup/testing)
      POST /brush-scan             {image (base64 JPEG), view, note} → brush density estimate
    ========================================================================= */
@@ -20,6 +21,7 @@ import { pollRain } from './rain.js';
 import { pollTactacam, prunePhotos } from './tactacam.js';
 import { classifyPending } from './classify.js';
 import { analyzeBrushPhoto } from './brushscan.js';
+import { pollAmbient, weatherFeed } from './weather.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -44,13 +46,15 @@ async function runAll(env, { rain = true } = {}) {
   out.cameras = await step(env, 'cameras', () => pollTactacam(env));
   out.labels = await step(env, 'labels', () => classifyPending(env));
   if (rain) out.rain = await step(env, 'rain', () => pollRain(env));
+  // Current conditions every run; the hourly run also stores history and the gauge's rain.
+  if (env.AMBIENT_API_KEY) out.weather = await step(env, 'weather', () => pollAmbient(env, { history: rain }));
   await prunePhotos(env).catch(() => {});
   return out;
 }
 
 export default {
   async scheduled(event, env, ctx) {
-    // Cameras every run (15 min); rain once an hour.
+    // Cameras and current weather every run (15 min); rain and weather history once an hour.
     const minute = new Date(event.scheduledTime).getUTCMinutes();
     ctx.waitUntil(runAll(env, { rain: minute < 15 }));
   },
@@ -83,6 +87,7 @@ export default {
       const { results } = await env.DB.prepare('SELECT date, gauge, est FROM rain WHERE date >= ?1 ORDER BY date').bind(since).all();
       return json(results);
     }
+    if (p === '/weather') return json(await weatherFeed(env, url.searchParams.get('after')));
     if (p === '/cameras') {
       const { results } = await env.DB.prepare('SELECT id, name, battery, signal, lat, lon, last_photo FROM cameras ORDER BY name').all();
       return json(results);

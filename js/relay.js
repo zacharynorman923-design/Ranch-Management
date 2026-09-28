@@ -88,6 +88,20 @@ async function doSync() {
     out.errors.push(`Rain: ${err.message}`);
   }
 
+  // --- weather station (every sensor) ---------------------------------------
+  if (db.settings().relayInfo?.sources?.ambient) {
+    try {
+      const after = db.settings().relayWxCursor || '1970-01-01';
+      const wx = await call(`/weather?after=${encodeURIComponent(after)}`);
+      if (wx.current) await db.saveSettings({ weatherNow: wx.current });
+      let cursor = after;
+      const days = wx.days.map((d) => { cursor = d.updated > cursor ? d.updated : cursor; return { id: `wx-${d.date}`, date: d.date, f: d.f }; });
+      if (days.length) await db.putMany('wxdays', days);
+      out.weatherDays = days.length;
+      await db.saveSettings({ relayWxCursor: cursor });
+    } catch (err) { out.errors.push(`Weather: ${err.message}`); }
+  }
+
   // --- cameras (battery, signal, location) ---------------------------------
   const deviceFor = new Map();
   try {
