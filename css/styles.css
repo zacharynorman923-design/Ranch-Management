@@ -319,3 +319,10 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .4); }
 .scan-species { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .scan-species li { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; }
 .btn.scan-use { padding: 4px 10px; font-size: 13px; white-space: nowrap; }
+
+/* Fishing outlook */
+.fish-factors { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.fish-factors li { display: flex; gap: 10px; align-items: baseline; }
+.fish-pts { flex: none; width: 40px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.good-t { color: var(--good); }
+#fishing { scroll-margin-top: 72px; }

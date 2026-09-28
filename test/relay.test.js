@@ -288,6 +288,17 @@ test('weather: day summaries skip overlap, rain totals, direction and battery fl
   assert.deepEqual(L.wxPublic(again.day).tempf, [70, 100, 85]);
 });
 
+test('weather: 3-hour pressure trend from readings kept between runs', () => {
+  const H = 3600e3, t0 = Date.UTC(2026, 8, 1, 12);
+  let st = L.pressureTrend([], t0, 30.10);
+  assert.equal(st.trend, null); // not enough history yet
+  for (let i = 1; i <= 12; i++) st = L.pressureTrend(st.hist, t0 + i * H / 4, 30.10 - 0.01 * i);
+  assert.equal(st.trend, -0.12); // 0.04 inHg/hr falling
+  assert.ok(st.hist.every(([ts]) => ts > t0 + 3 * H - 4.5 * H));
+  st = L.pressureTrend(st.hist, t0 + 6 * H, 29.98); // 3 hr after the last reading
+  assert.equal(st.trend, 0);
+});
+
 test('weather: current conditions, daily history with backfill, gauge rain', { timeout: 30000 }, async (t) => {
   const realFetch = globalThis.fetch;
   const H = 3600e3;
@@ -314,6 +325,7 @@ test('weather: current conditions, daily history with backfill, gauge rain', { t
   const feed = await (await call(env, '/weather')).json();
   assert.equal(feed.current.data.tempf, 88);
   assert.equal(feed.current.name, 'Ranch HQ');
+  assert.equal(feed.current.pressTrend3h, null); // first reading
   const d = feed.days.find((x) => x.date === day);
   assert.deepEqual(d.f.tempf, [70, 90, 80]);
   assert.deepEqual(d.f.humidity, [30, 70, 50]);

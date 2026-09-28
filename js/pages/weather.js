@@ -13,6 +13,45 @@ const ago = (ms) => {
 const hist = { all: false };
 const deg = (x) => (x == null ? '—' : `${n0(x)}°`);
 
+const FISH_TONE = { excellent: 'good', good: 'good', fair: 'warn', poor: 'bad', unsafe: 'bad' };
+const clock = (ms) => (ms == null ? '—' : new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+function fishing() {
+  const s = db.settings();
+  const w = s.weatherNow;
+  if (!w?.data) return null;
+  const loc = s.relayInfo?.location;
+  const [lat, lon] = Number.isFinite(loc?.lat) && Number.isFinite(loc?.lon) && (loc.lat || loc.lon) ? [loc.lat, loc.lon] : [30.7488, -99.2303];
+  const recent = db.all('wxdays').sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 3).map((d) => d.f?.tempf?.[2]);
+  return { ...C.fishingOutlook({ data: w.data, pressTrend: w.pressTrend3h ?? null, recentAvgTemps: recent, lat, lon }), sun: C.sunTimes(lat, lon, Date.now()) };
+}
+/** Dashboard tile for the fishing outlook, or ''. */
+export function fishingTile() {
+  const o = fishing();
+  return o ? `<a href="#/weather?at=fishing">${stat('Fishing', o.level, o.level === 'unsafe' ? 'lightning nearby' : `${o.score}/100 · tap for why`, FISH_TONE[o.level])}</a>` : '';
+}
+function fishingPanel() {
+  const o = fishing();
+  if (!o) return '';
+  return `<section class="panel" id="fishing">
+    <div class="panel-head"><h2>🎣 Fishing outlook</h2>${pill(o.level === 'unsafe' ? 'UNSAFE' : `${o.level} · ${o.score}/100`, FISH_TONE[o.level])}</div>
+    <p class="big">${esc(o.headline)}</p>
+    <ul class="plain fish-factors">${o.factors.map((x) => `<li><span class="fish-pts ${x.pts > 0 ? 'good-t' : x.pts < 0 ? 'bad-t' : 'muted'}">${x.pts > 0 ? '+' : ''}${x.pts}</span><div><b>${esc(x.label)}.</b> ${esc(x.note)}</div></li>`).join('')}</ul>
+    <p class="note">Best windows today: <b>${clock(o.sun.rise && o.sun.rise - 45 * 60000)}–${clock(o.sun.rise && o.sun.rise + 90 * 60000)}</b> around sunrise (${clock(o.sun.rise)}) and <b>${clock(o.sun.set && o.sun.set - 90 * 60000)}–${clock(o.sun.set && o.sun.set + 45 * 60000)}</b> around sunset (${clock(o.sun.set)}).</p>
+    <details class="lines"><summary>How this is scored</summary>
+      <p class="small" style="margin-top:8px">It's built for stock tanks (bass, bream and catfish). It starts at 50 and adds or subtracts points for:
+      <ul class="plain small">
+        <li>• <b>Pressure trend</b> over 3 hours, the biggest factor. Slowly falling ahead of a front is best; rising fast after one is worst.</li>
+        <li>• <b>Wind.</b> A light ripple beats glassy calm or a gale.</li>
+        <li>• <b>Water temperature</b>, estimated from the last 3 days' average air temperatures. Bass and bream are most active at 60–80°F. A thermometer 2 ft down is more accurate.</li>
+        <li>• <b>Dawn and dusk.</b></li>
+        <li>• <b>Clouds</b> (from the solar sensor) and <b>light rain.</b></li>
+        <li>• <b>New or full moon.</b></li>
+      </ul>
+      Lightning within 10 miles in the last 30 minutes overrides everything.</p>
+    </details>
+  </section>`;
+}
+
 /** Dashboard tile, or '' when no station is connected. */
 export function weatherTile() {
   const w = db.settings().weatherNow;
@@ -74,6 +113,7 @@ export function weather() {
         </tbody></table></div>`).join('')}
       </details>
     </section>
+    ${fishingPanel()}
     <section class="panel">
       <div class="panel-head"><h2>Daily history</h2>${pill(`${days.length} days`)}</div>
       ${days.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Day</th><th>High</th><th>Low</th><th>Rain</th><th>Humidity</th><th>Top gust</th><th>UV</th>${soilKeys.map((k) => `<th>${esc(C.wxField(k).label)}</th>`).join('')}</tr></thead><tbody>
@@ -91,6 +131,7 @@ export function weather() {
       <p class="note">Daily rain from the station also feeds the <a href="#/rain">rain log</a> and the stocking calculator as “Rain gauge (auto)”.</p>
     </section>`;
 }
-export function bindWeather(el, rerender) {
+export function bindWeather(el, rerender, params) {
+  if (params?.get('at') === 'fishing' && !hist.jumped) { hist.jumped = true; requestAnimationFrame(() => el.querySelector('#fishing')?.scrollIntoView()); }
   el.querySelector('[data-wx-all]')?.addEventListener('click', () => { hist.all = !hist.all; rerender(); });
 }

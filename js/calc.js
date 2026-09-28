@@ -923,3 +923,110 @@ export function wxMonths(days) {
   }
   return Object.values(m).sort((a, b) => (a.month < b.month ? 1 : -1)).map((x) => ({ ...x, avgHi: x.hiN ? x.hiSum / x.hiN : null }));
 }
+
+/* ----------------------------- fishing outlook ---------------------------- */
+const RAD = Math.PI / 180;
+/** Sun elevation (degrees) at a place and instant — standard low-precision solar position. */
+export function sunElevation(lat, lon, ms) {
+  const d = ms / 86400000 - 10957.5; // days since 2000-01-01 12:00 UTC
+  const g = (357.529 + 0.98560028 * d) * RAD;
+  const q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * RAD;
+  const e = (23.439 - 0.00000036 * d) * RAD;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = ((18.697374558 + 24.06570982441908 * d) % 24 + 24) % 24;
+  const ha = (gmst * 15 + lon) * RAD - ra;
+  return Math.asin(Math.sin(lat * RAD) * Math.sin(dec) + Math.cos(lat * RAD) * Math.cos(dec) * Math.cos(ha)) / RAD;
+}
+/** Sunrise on the local calendar day containing `ms`, and the sunset that follows it (ms). */
+export function sunTimes(lat, lon, ms) {
+  const start = new Date(ms); start.setHours(0, 0, 0, 0);
+  const cross = (from, to, up) => {
+    let prev = sunElevation(lat, lon, from);
+    for (let t = from + 120000; t <= to; t += 120000) {
+      const el = sunElevation(lat, lon, t);
+      if (up ? prev < -0.833 && el >= -0.833 : prev >= -0.833 && el < -0.833) return t;
+      prev = el;
+    }
+    return null;
+  };
+  const rise = cross(start.getTime(), start.getTime() + 86400000, true);
+  return { rise, set: rise == null ? null : cross(rise, rise + 86400000, false) };
+}
+/** Moon age in days (0 = new, ~14.8 = full). */
+export const moonAge = (ms) => ((((ms - Date.UTC(2000, 0, 6, 18, 14)) / 86400000) % 29.530588853) + 29.530588853) % 29.530588853;
+
+/**
+ * Fishing outlook for stock tanks (bass, bream, catfish) from the weather
+ * station. Starts at 50 and adds or subtracts for pressure trend, wind,
+ * water temperature (estimated from the last few days' air temperatures),
+ * dawn/dusk, cloud cover, rain and moon phase. Lightning nearby overrides
+ * everything. Returns { score, level, factors: [{ label, pts, note }], ... }.
+ */
+export function fishingOutlook({ data = {}, pressTrend = null, recentAvgTemps = [], lat = 30.7488, lon = -99.2303, now = Date.now() } = {}) {
+  const f = [];
+  const add = (label, pts, note) => f.push({ label, pts, note });
+  const val = (k) => (data[k] == null || data[k] === '' ? null : Number(data[k]));
+
+  // Lightning: a strike within 10 miles in the last 30 minutes means get off the water.
+  const lt = val('lightning_time'), ld = val('lightning_distance');
+  if (lt != null && ld != null && ld <= 10 && now - lt < 30 * 60000) {
+    return { score: 0, level: 'unsafe', headline: `Lightning ${n1f(ld)} mi away. Stay off the water.`, factors: [{ label: 'Lightning', pts: -100, note: `Strike ${Math.round((now - lt) / 60000)} min ago, ${n1f(ld)} mi away. Wait 30 minutes after the last one.` }] };
+  }
+
+  if (pressTrend == null) add('Pressure', 0, 'Trend not known yet. It needs a couple of hours of readings.');
+  else if (pressTrend <= -0.06) add('Pressure', 10, `Falling fast (${pressTrend.toFixed(2)} inHg in 3 hr). A front is close. Fish feed hard just before it, then shut down.`);
+  else if (pressTrend <= -0.02) add('Pressure', 20, `Falling slowly (${pressTrend.toFixed(2)} inHg in 3 hr). Usually the best bite.`);
+  else if (pressTrend < 0.02) add('Pressure', (val('baromrelin') ?? 30) < 30.1 ? 5 : 0, 'Steady. Fish hold their normal patterns.');
+  else if (pressTrend < 0.06) add('Pressure', -10, `Rising (+${pressTrend.toFixed(2)} inHg in 3 hr). Fish are slower after a front.`);
+  else add('Pressure', -20, `Rising fast (+${pressTrend.toFixed(2)} inHg in 3 hr). The post-front, bluebird-sky slump. Slow down and fish tight to cover.`);
+
+  const wind = val('windspdmph_avg10m') ?? val('windspeedmph');
+  if (wind != null) {
+    if (wind < 3) add('Wind', 0, 'Calm. Fish spook easily on a glassy tank; use lighter line and make long casts.');
+    else if (wind <= 12) add('Wind', 10, `Light breeze (${Math.round(wind)} mph). The ripple hides you and pushes bait. Fish the windblown bank.`);
+    else if (wind <= 20) add('Wind', 0, `Breezy (${Math.round(wind)} mph). Casting is harder. Fish the windblown bank and points.`);
+    else add('Wind', -15, `Too windy (${Math.round(wind)} mph).`);
+  }
+
+  const temps = recentAvgTemps.filter((x) => Number.isFinite(Number(x))).map(Number);
+  const water = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : val('tempf');
+  if (water != null) {
+    const w = Math.round(water);
+    if (water >= 60 && water <= 80) add('Water temp', 10, `About ${w}°F (estimated from recent air temperatures). Prime range for bass and bream.`);
+    else if ((water >= 50 && water < 60) || (water > 80 && water <= 88)) add('Water temp', 0, `About ${w}°F (estimated). Fish are active but pickier.${water > 80 ? ' Early and late are best.' : ' Try the warm, shallow north bank in the afternoon.'}`);
+    else add('Water temp', -10, `About ${w}°F (estimated). ${water > 88 ? 'Fish go deep and sluggish. Go at dawn or after dark; catfish still bite at night.' : 'Cold water, slow fish. Fish slow and deep in the warmest part of the day.'}`);
+  }
+
+  const el = sunElevation(lat, lon, now);
+  const air = val('tempf');
+  if (el > -6 && el < 12) add('Time of day', 15, 'Dawn or dusk, the prime feeding window.');
+  else if (el <= -6) add('Time of day', (air ?? 70) >= 75 ? 5 : -5, (air ?? 70) >= 75 ? 'Night. Good for catfish, and bass on topwater in summer.' : 'Night. A slow bite in cool weather.');
+  else {
+    const clear = 1000 * Math.sin(el * RAD);
+    const solar = val('solarradiation');
+    if (solar != null && clear > 200 && solar < 0.45 * clear) add('Clouds', 10, 'Overcast. Fish roam and feed more in low light.');
+    else if ((air ?? 0) >= 85 && el > 35) add('Time of day', -10, 'Hot midday sun. Fish sit deep and in shade.');
+    else add('Time of day', 0, 'Daytime. Work shade, docks and deeper edges.');
+  }
+
+  const rate = val('hourlyrainin');
+  if (rate != null && rate > 0) {
+    if (rate < 0.25) add('Rain', 5, 'Light rain. Low light and fresh inflow often turn fish on.');
+    else if (rate >= 0.5) add('Rain', -10, 'Heavy rain. Muddy inflow and poor conditions.');
+  }
+
+  const age = moonAge(now);
+  const toPhase = Math.min(age, Math.abs(age - 14.77), 29.53 - age);
+  if (toPhase <= 2) add('Moon', 5, `${age < 7 || age > 22 ? 'New' : 'Full'} moon. Solunar tables rate these days higher.`);
+
+  const score = Math.max(0, Math.min(100, 50 + f.reduce((a, x) => a + x.pts, 0)));
+  const level = score >= 75 ? 'excellent' : score >= 60 ? 'good' : score >= 40 ? 'fair' : 'poor';
+  const best = [...f].sort((a, b) => b.pts - a.pts)[0];
+  const worst = [...f].sort((a, b) => a.pts - b.pts)[0];
+  const headline = { excellent: 'Go fishing.', good: 'Worth a trip to the tank.', fair: 'Fishable. Expect to work for them.', poor: 'Slow bite likely.' }[level]
+    + (level === 'poor' || level === 'fair' ? (worst?.pts < 0 ? ` ${worst.label}: ${worst.note.split(/\.\s/)[0]}.` : '') : best?.pts > 0 ? ` ${best.label}: ${best.note.split(/\.\s/)[0]}.` : '');
+  return { score, level, headline, factors: f, water };
+}
+const n1f = (x) => (Math.round(Number(x) * 10) / 10).toString();

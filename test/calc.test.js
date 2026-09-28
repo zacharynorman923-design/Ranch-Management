@@ -410,3 +410,29 @@ test('weather station: labels, units, batteries, cattle heat stress, month roll-
   assert.equal(mo[0].avgHi, 99);
   assert.equal(mo[1].freezes, 1);
 });
+
+test('fishing outlook: pressure, wind, water temp, light, lightning', () => {
+  const lat = 30.7488, lon = -99.2303;
+  // Sun position sanity: Mason at local solar noon near the equinox ≈ 90 − 30.7 = 59°.
+  near(C.sunElevation(lat, lon, Date.UTC(2026, 2, 20, 18, 40)), 59.4, 1.5);
+  assert.ok(C.sunElevation(lat, lon, Date.UTC(2026, 2, 20, 6)) < -30); // 1 am
+  const st = C.sunTimes(lat, lon, Date.UTC(2026, 2, 20, 18));
+  near((st.set - st.rise) / 3600e3, 12.1, 0.3);
+  near(C.moonAge(Date.UTC(2026, 0, 18, 19, 52)), 0, 0.6); // new moon Jan 18 2026
+
+  const midday = Date.UTC(2026, 3, 15, 18, 30); // spring, mid-afternoon sun
+  const good = C.fishingOutlook({ data: { windspeedmph: 7, tempf: 74, baromrelin: 29.9, solarradiation: 250 }, pressTrend: -0.04, recentAvgTemps: [70, 72, 71], lat, lon, now: midday });
+  assert.equal(good.level, 'excellent');
+  assert.deepEqual(good.factors.map((x) => x.label).slice(0, 3), ['Pressure', 'Wind', 'Water temp']);
+  assert.ok(good.factors.some((x) => x.label === 'Clouds'));
+
+  const bad = C.fishingOutlook({ data: { windspeedmph: 25, tempf: 99, solarradiation: 950 }, pressTrend: 0.08, recentAvgTemps: [92, 93, 91], lat, lon, now: Date.UTC(2026, 6, 15, 19) });
+  assert.equal(bad.level, 'poor');
+  assert.equal(bad.score, 0);
+
+  const storm = C.fishingOutlook({ data: { lightning_time: midday - 5 * 60000, lightning_distance: 4, windspeedmph: 5 }, pressTrend: -0.04, lat, lon, now: midday });
+  assert.equal(storm.level, 'unsafe');
+  const oldStrike = C.fishingOutlook({ data: { lightning_time: midday - 90 * 60000, lightning_distance: 4 }, lat, lon, now: midday });
+  assert.notEqual(oldStrike.level, 'unsafe');
+  assert.equal(C.fishingOutlook({ data: {}, lat, lon, now: midday }).factors[0].pts, 0); // unknown trend is neutral
+});
