@@ -129,6 +129,8 @@ phone is off:
 - It pulls **rain** every hour: from an Ambient Weather gauge once you have
   one, and from a free weather-model estimate for the ranch until then. The
   estimate is backfilled about 13 months.
+- With an Ambient station it pulls **every sensor** (current conditions every
+  15 minutes, daily highs/lows/averages every hour) for the Weather station page.
 
 The app pulls from the relay whenever it has signal. Cameras appear under
 Cams & feeders with battery and last-photo alerts. Photos land in the photo

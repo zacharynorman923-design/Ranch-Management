@@ -55,3 +55,10 @@ CREATE TABLE IF NOT EXISTS photo_labels (
   updated  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS photo_labels_status ON photo_labels(status, updated);
+-- Ambient Weather station: one summary per local day, {from, to, f: {field: [min, max, sum, n]}}.
+CREATE TABLE IF NOT EXISTS weather_days (
+  date    TEXT PRIMARY KEY,
+  data    TEXT NOT NULL,
+  updated TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS weather_days_updated ON weather_days(updated);

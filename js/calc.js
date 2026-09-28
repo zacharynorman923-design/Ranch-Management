@@ -824,3 +824,102 @@ export function scanDensity(row, areaSqft) {
     height: num(row?.typical_height_ft) || null, canopy: num(row?.typical_canopy_ft) || null, pearSize,
   };
 }
+
+/* ------------------------- Ambient weather station ------------------------ */
+// field: [label, unit, group, decimals]
+const WX_FIELDS = {
+  tempf: ['Temperature', '°F', 'Outdoor', 1], feelsLike: ['Feels like', '°F', 'Outdoor', 1], dewPoint: ['Dew point', '°F', 'Outdoor', 1], humidity: ['Humidity', '%', 'Outdoor', 0],
+  windspeedmph: ['Wind', 'mph', 'Wind', 1], windgustmph: ['Gust', 'mph', 'Wind', 1], maxdailygust: ['Top gust today', 'mph', 'Wind', 1],
+  windspdmph_avg2m: ['Wind, 2-min average', 'mph', 'Wind', 1], windspdmph_avg10m: ['Wind, 10-min average', 'mph', 'Wind', 1],
+  winddir: ['Wind from', 'dir', 'Wind', 0], winddir_avg2m: ['Wind from, 2-min average', 'dir', 'Wind', 0], winddir_avg10m: ['Wind from, 10-min average', 'dir', 'Wind', 0], windgustdir: ['Gust from', 'dir', 'Wind', 0],
+  hourlyrainin: ['Rain rate', 'in/hr', 'Rain', 2], eventrainin: ['This storm', 'in', 'Rain', 2], dailyrainin: ['Today', 'in', 'Rain', 2], '24hourrainin': ['Last 24 hours', 'in', 'Rain', 2],
+  weeklyrainin: ['This week', 'in', 'Rain', 2], monthlyrainin: ['This month', 'in', 'Rain', 2], yearlyrainin: ['This year', 'in', 'Rain', 2], totalrainin: ['Since the gauge was installed', 'in', 'Rain', 2], lastRain: ['Last rain', 'time', 'Rain', 0],
+  solarradiation: ['Solar radiation', 'W/m²', 'Sun', 0], uv: ['UV index', '', 'Sun', 0],
+  baromrelin: ['Pressure (sea level)', 'inHg', 'Pressure', 2], baromabsin: ['Pressure (at the station)', 'inHg', 'Pressure', 2],
+  tempinf: ['Indoor temperature', '°F', 'Indoor', 1], humidityin: ['Indoor humidity', '%', 'Indoor', 0], feelsLikein: ['Indoor feels like', '°F', 'Indoor', 1], dewPointin: ['Indoor dew point', '°F', 'Indoor', 1],
+  lightning_day: ['Strikes today', '', 'Lightning', 0], lightning_hour: ['Strikes, last hour', '', 'Lightning', 0], lightning_distance: ['Last strike distance', 'mi', 'Lightning', 1], lightning_time: ['Last strike', 'time', 'Lightning', 0],
+  pm25: ['PM2.5', 'µg/m³', 'Air quality', 0], pm25_24h: ['PM2.5, 24-hr average', 'µg/m³', 'Air quality', 0], aqi_pm25: ['AQI (PM2.5)', '', 'Air quality', 0], aqi_pm25_24h: ['AQI, 24-hr', '', 'Air quality', 0],
+  pm25_in: ['Indoor PM2.5', 'µg/m³', 'Air quality', 0], pm25_in_24h: ['Indoor PM2.5, 24-hr', 'µg/m³', 'Air quality', 0], co2: ['CO₂', 'ppm', 'Air quality', 0], co2_in_24h: ['Indoor CO₂, 24-hr', 'ppm', 'Air quality', 0],
+};
+const WX_PATTERNS = [
+  [/^temp(\d+)f$/, (n) => [`Sensor ${n} temperature`, '°F', 'Extra sensors', 1]],
+  [/^humidity(\d+)$/, (n) => [`Sensor ${n} humidity`, '%', 'Extra sensors', 0]],
+  [/^feelsLike(\d+)$/, (n) => [`Sensor ${n} feels like`, '°F', 'Extra sensors', 1]],
+  [/^dewPoint(\d+)$/, (n) => [`Sensor ${n} dew point`, '°F', 'Extra sensors', 1]],
+  [/^soiltemp(\d+)f?$/, (n) => [`Soil ${n} temperature`, '°F', 'Soil', 1]],
+  [/^soilhum(\d+)$/, (n) => [`Soil ${n} moisture`, '%', 'Soil', 0]],
+  [/^leafwetness(\d+)x?$/, (n) => [`Leaf wetness ${n}`, '%', 'Soil', 0]],
+  [/^leak(\d+)$/, (n) => [`Leak sensor ${n}`, 'leak', 'Leak', 0]],
+  [/^batt?_?(.*)$/, (x) => [({ out: 'Outdoor array battery', in: 'Console battery', rain: 'Rain gauge battery', lightning: 'Lightning sensor battery', co2: 'CO₂ sensor battery', '25': 'Air quality sensor battery', '25in': 'Indoor air quality battery' })[x]
+    || (/^\d+$/.test(x) ? `Sensor ${x} battery` : /^leak(\d+)$/.test(x) ? `Leak sensor ${x.slice(4)} battery` : `Battery (${x || 'station'})`), 'batt', 'Batteries', 0]],
+];
+const WX_HIDE = new Set(['dateutc', 'date', 'tz', 'loc', 'mac']);
+export const WX_GROUPS = ['Outdoor', 'Wind', 'Rain', 'Sun', 'Pressure', 'Lightning', 'Soil', 'Extra sensors', 'Air quality', 'Indoor', 'Leak', 'Batteries', 'Other'];
+
+/** Label, unit and group for an Ambient field name (unknown fields still show, under Other). */
+export function wxField(key) {
+  if (WX_FIELDS[key]) { const [label, unit, group, dp] = WX_FIELDS[key]; return { key, label, unit, group, dp }; }
+  for (const [re, fn] of WX_PATTERNS) {
+    const m = key.match(re);
+    if (m) { const [label, unit, group, dp] = fn(...m.slice(1)); return { key, label, unit, group, dp }; }
+  }
+  return { key, label: key, unit: '', group: 'Other', dp: 2 };
+}
+export const compass = (deg) => (num(deg, NaN) >= 0 ? ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'][Math.round(num(deg) / 22.5) % 16] : '');
+/** One reading as display text. Battery flags: Ambient sends 1 = OK, 0 = low. */
+export function wxText(key, v) {
+  const f = wxField(key);
+  if (v == null || v === '') return '—';
+  if (f.unit === 'time') { const d = new Date(typeof v === 'number' || /^\d+$/.test(v) ? Number(v) : v); return isNaN(d) ? String(v) : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  if (f.unit === 'batt') return Number(v) === 0 ? 'LOW' : 'OK';
+  if (f.unit === 'leak') return Number(v) === 1 ? 'LEAK' : Number(v) === 0 ? 'dry' : 'offline';
+  if (f.unit === 'dir') return `${compass(v)} (${Math.round(Number(v))}°)`;
+  const x = Number(v);
+  if (!Number.isFinite(x)) return String(v);
+  return `${x.toFixed(f.dp)}${f.unit ? (/^[°%]/.test(f.unit) ? f.unit : ` ${f.unit}`) : ''}`;
+}
+/** Every reported field, grouped and ordered for display. */
+export function wxGroups(data) {
+  const out = {};
+  for (const [k, v] of Object.entries(data || {})) {
+    if (WX_HIDE.has(k) || typeof v === 'object') continue;
+    const f = wxField(k);
+    (out[f.group] ||= []).push({ ...f, value: v, text: wxText(k, v) });
+  }
+  return WX_GROUPS.filter((g) => out[g]).map((g) => ({ group: g, rows: out[g] }));
+}
+/** Battery fields reading low. */
+export const wxLowBatteries = (data) => Object.entries(data || {}).filter(([k, v]) => wxField(k).unit === 'batt' && Number(v) === 0).map(([k]) => wxField(k).label);
+
+/**
+ * Cattle heat stress: temperature–humidity index (°F),
+ * THI = T − (0.55 − 0.0055·RH)(T − 58). Livestock Weather Safety Index:
+ * ≤74 normal, 75–78 alert, 79–83 danger, ≥84 emergency.
+ */
+export function cattleTHI(tempF, rh) {
+  const t = num(tempF, NaN), h = num(rh, NaN);
+  if (!Number.isFinite(t) || !Number.isFinite(h)) return null;
+  const thi = t - (0.55 - 0.0055 * h) * (t - 58);
+  const level = thi >= 84 ? 'emergency' : thi >= 79 ? 'danger' : thi >= 75 ? 'alert' : 'normal';
+  const advice = {
+    normal: 'No heat stress.',
+    alert: 'Mild heat stress. Make sure water is flowing and shade is available.',
+    danger: 'Heat stress. Don\'t work or haul cattle except early morning. Check water twice a day.',
+    emergency: 'Severe heat stress. No working cattle. Check water and shade now; watch for panting and slobbering.',
+  }[level];
+  return { thi: Math.round(thi * 10) / 10, level, advice };
+}
+/** Month roll-up of daily summaries: highs, lows, rain, 100° days and freezes. */
+export function wxMonths(days) {
+  const m = {};
+  for (const d of days) {
+    const k = String(d.date).slice(0, 7);
+    const hi = d.f?.tempf?.[1], lo = d.f?.tempf?.[0], rain = d.f?.dailyrainin?.[1];
+    const x = (m[k] ||= { month: k, days: 0, hi: null, lo: null, hiSum: 0, hiN: 0, rain: 0, rainDays: 0, over100: 0, freezes: 0 });
+    x.days++;
+    if (hi != null) { x.hi = x.hi == null ? hi : Math.max(x.hi, hi); x.hiSum += hi; x.hiN++; if (hi >= 100) x.over100++; }
+    if (lo != null) { x.lo = x.lo == null ? lo : Math.min(x.lo, lo); if (lo <= 32) x.freezes++; }
+    if (rain != null) { x.rain += rain; x.rainDays++; }
+  }
+  return Object.values(m).sort((a, b) => (a.month < b.month ? 1 : -1)).map((x) => ({ ...x, avgHi: x.hiN ? x.hiSum / x.hiN : null }));
+}

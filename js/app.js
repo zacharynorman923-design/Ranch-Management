@@ -11,6 +11,7 @@ import * as L from './pages/land.js';
 import * as K from './pages/compliance.js';
 import * as M from './pages/money.js';
 import * as O from './pages/ops.js';
+import * as WX from './pages/weather.js';
 import { APP_VERSION } from './version.js';
 
 const ROUTES = {
@@ -23,6 +24,7 @@ const ROUTES = {
   census: { title: 'Spotlight census', group: 'Wildlife', render: W.census },
   devices: { title: 'Cams & feeders', group: 'Wildlife', render: W.devices, bind: W.bindDevices },
   dove: { title: 'Dove fields', group: 'Wildlife', render: W.dove, bind: W.bindDove },
+  weather: { title: 'Weather station', group: 'Land & water', render: WX.weather, bind: WX.bindWeather },
   rain: { title: 'Rain gauge', group: 'Land & water', render: G.rain },
   water: { title: 'Water points', group: 'Land & water', render: L.water, bind: L.bindWater },
   brush: { title: 'Brush · cedar, mesquite, pear', group: 'Land & water', render: L.brush, bind: L.bindBrush },
@@ -116,6 +118,7 @@ function dashboard() {
       <div class="panel-head"><h2>${esc(s.ranchName)}</h2><span class="muted small">${s.acres} ac · ${esc(s.county)} County</span></div>
       <div class="stats">
         <a href="#/stocking">${stat('Stocking', `${n1(st.herd.au)} / ${st.cap.head}`, st.status.msg, tone)}</a>
+        ${WX.weatherTile()}
         <a href="#/rain">${stat('Rain, 12 mo', st.rain.ratio == null ? '—' : pct(st.rain.ratio), rainSub(lastRain), st.rain.ratio != null && st.rain.ratio < 0.75 ? 'warn' : '')}</a>
         <a href="#/herd">${stat('Lb weaned / exposed', kpi.lbsPerExposed == null ? '—' : n0(kpi.lbsPerExposed), `${kpi.crop} calf crop`)}</a>
         <a href="#/census">${stat('Acres per deer', census ? n1(census.acresPerDeer) : '—', census ? `~${n0(census.population)} deer (${census.year})` : 'no census')}</a>

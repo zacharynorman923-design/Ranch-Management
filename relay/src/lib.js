@@ -13,19 +13,47 @@ export const addDaysISO = (iso, n) => {
   return new Date(Date.UTC(y, m - 1, d) + n * 86400000).toISOString().slice(0, 10);
 };
 
+/* Ambient Weather station records → one summary per local day. Every numeric
+   sensor field gets [min, max, sum, count]; running rain totals other than
+   dailyrainin, wind direction, battery flags and timestamps are skipped. */
+const WX_SKIP = /^(dateutc|date|tz|lastRain|loc|mac|lightning_time)$|^(batt|bat_)|^winddir|rainin$/;
+const WX_KEEP = new Set(['dailyrainin']);
+export const wxKeep = (k) => WX_KEEP.has(k) || !WX_SKIP.test(k);
+
 /**
- * Ambient Weather's `dailyrainin` is a running total that resets at local
- * midnight, so a day's rain is the largest value seen on that local date.
- * records: [{ dateutc: ms, dailyrainin }]  →  { 'YYYY-MM-DD': inches }
+ * Fold 5-minute records into a day summary. `day.from`/`day.to` record which
+ * stretch of time is already counted, so overlapping fetches don't double up.
  */
-export function ambientDailyTotals(records, tz) {
-  const out = {};
-  for (const r of records || []) {
-    const v = Number(r.dailyrainin);
-    if (!Number.isFinite(v) || r.dateutc == null) continue;
-    const d = localDate(Number(r.dateutc), tz);
-    out[d] = Math.max(out[d] ?? 0, v);
+export function wxAccumulate(day, records) {
+  const d = { from: day?.from ?? null, to: day?.to ?? null, f: { ...(day?.f || {}) } };
+  const fresh = (records || []).filter((r) => Number.isFinite(Number(r?.dateutc))
+    && (d.from == null || Number(r.dateutc) < d.from || Number(r.dateutc) > d.to));
+  for (const r of fresh) {
+    const t = Number(r.dateutc);
+    d.from = d.from == null ? t : Math.min(d.from, t);
+    d.to = d.to == null ? t : Math.max(d.to, t);
+    for (const [k, v] of Object.entries(r)) {
+      if (!wxKeep(k) || typeof v === 'boolean' || v === '' || v == null) continue;
+      const x = Number(v);
+      if (!Number.isFinite(x)) continue;
+      const a = d.f[k] ? [...d.f[k]] : [x, x, 0, 0];
+      a[0] = Math.min(a[0], x); a[1] = Math.max(a[1], x); a[2] += x; a[3] += 1;
+      d.f[k] = a;
+    }
   }
+  return { day: d, added: fresh.length };
+}
+/** Group records by local date. */
+export function wxByDate(records, tz) {
+  const out = {};
+  for (const r of records || []) if (Number.isFinite(Number(r?.dateutc))) (out[localDate(Number(r.dateutc), tz)] ||= []).push(r);
+  return out;
+}
+/** Stored day summary → what the app gets: { field: [min, max, avg] }, rounded. */
+export function wxPublic(day) {
+  const r = (x) => Math.round(x * 100) / 100;
+  const out = {};
+  for (const [k, [mn, mx, sum, n]] of Object.entries(day?.f || {})) out[k] = [r(mn), r(mx), r(sum / n)];
   return out;
 }
 

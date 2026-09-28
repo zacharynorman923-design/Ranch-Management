@@ -172,6 +172,7 @@ export function settings() {
         <button class="btn primary" data-relay-sync ${s.relayUrl && s.relayToken ? '' : 'disabled'}>Sync now</button>
         <button class="btn" data-relay-status ${s.relayUrl && s.relayToken ? '' : 'disabled'}>Check relay</button>
       </div>
+      <p class="note small">Weather station: ${s.relayInfo?.sources?.ambient ? (s.weatherNow ? `connected (${esc(s.weatherNow.name || 'Ambient')}). See <a href="#/weather">Weather station</a>.` : 'keys set; readings arrive on the next sync.') : 'not connected. Add <code>AMBIENT_API_KEY</code> and <code>AMBIENT_APPLICATION_KEY</code> secrets and redeploy the relay.'}</p>
       <p class="note small">Photo labeling: ${s.relayInfo?.sources?.classifier ? `on (${esc(s.relayInfo.sources.classifier)})` : 'off. Add an <code>ANTHROPIC_API_KEY</code> secret and redeploy the relay (see relay/README).'}</p>
       ${s.relayLastResult ? `<p class="note small">Last sync: ${s.relayLastResult.rain} rain days, ${s.relayLastResult.cameras} cameras, ${s.relayLastResult.photos} new photos${s.relayLastResult.labels ? `, ${s.relayLastResult.labels} labels` : ''}.${(s.relayLastResult.errors || []).map((e) => `<br><span class="bad-t">${esc(e)}</span>`).join('')}</p>` : ''}
       <pre class="small relay-out hidden" data-relay-out></pre>

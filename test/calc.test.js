@@ -382,3 +382,31 @@ test('photo scan → plants/acre, cover class and a no-license method', () => {
   }
   assert.equal(C.scanDensity({ species: 'other brush' }, 100).target, null);
 });
+
+test('weather station: labels, units, batteries, cattle heat stress, month roll-up', () => {
+  assert.equal(C.wxText('tempf', 88.24), '88.2°F');
+  assert.equal(C.wxText('winddir', 190), 'S (190°)');
+  assert.equal(C.wxText('baromrelin', 29.9), '29.90 inHg');
+  assert.equal(C.wxField('soilhum3').label, 'Soil 3 moisture');
+  assert.equal(C.wxField('temp2f').group, 'Extra sensors');
+  assert.equal(C.wxText('battout', 0), 'LOW');
+  assert.equal(C.wxField('something_new').group, 'Other');
+  assert.deepEqual(C.wxLowBatteries({ battout: 1, batt1: 0, tempf: 0 }), ['Sensor 1 battery']);
+  assert.equal(C.wxField('battout').label, 'Outdoor array battery');
+  assert.equal(C.wxField('battleak2').label, 'Leak sensor 2 battery');
+  assert.equal(C.wxField('batt_lightning').label, 'Lightning sensor battery');
+  const g = C.wxGroups({ tempf: 90, humidity: 40, dailyrainin: 0.1, tz: 'America/Chicago', dateutc: 1, batt1: 1 });
+  assert.deepEqual(g.map((x) => x.group), ['Outdoor', 'Rain', 'Batteries']);
+  const h = C.cattleTHI(95, 40);
+  assert.equal(h.thi, 82.8);        // 95 − (0.55 − 0.22)(37)
+  assert.equal(h.level, 'danger');
+  assert.equal(C.cattleTHI(75, 50).level, 'normal');
+  assert.equal(C.cattleTHI(100, 50).level, 'emergency');
+  assert.equal(C.cattleTHI(null, 50), null);
+  const mo = C.wxMonths([{ date: '2026-07-01', f: { tempf: [75, 101, 88], dailyrainin: [0, 0.5, 0.2] } }, { date: '2026-07-02', f: { tempf: [70, 97, 85], dailyrainin: [0, 0.25, 0.1] } }, { date: '2026-01-05', f: { tempf: [28, 50, 40] } }]);
+  assert.equal(mo[0].month, '2026-07');
+  assert.equal(mo[0].rain, 0.75);
+  assert.equal(mo[0].over100, 1);
+  assert.equal(mo[0].avgHi, 99);
+  assert.equal(mo[1].freezes, 1);
+});
