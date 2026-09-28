@@ -5,7 +5,7 @@
    first days after setup also walk back through older history (up to
    WX_BACKFILL_DAYS, a few days per hour) so the app has a record from day one.
    Ambient allows one request per second per key. */
-import { wxAccumulate, wxByDate, wxPublic } from './lib.js';
+import { wxAccumulate, wxByDate, wxPublic, pressureTrend } from './lib.js';
 import { kvGet, kvSet } from './store.js';
 
 const AMBIENT = 'https://rt.ambientweather.net/v1';
@@ -47,9 +47,12 @@ export async function pollAmbient(env, { history = true } = {}) {
   const want = String(env.AMBIENT_MAC || '').trim().toLowerCase();
   const dev = devs.find((d) => want && String(d.macAddress).toLowerCase() === want) || devs[0];
   const tz = dev.lastData?.tz || env.RANCH_TZ || 'America/Chicago';
+  // Pressure trend for the fishing outlook: the 3-hour change from readings kept here.
+  const press = pressureTrend(await kvGet(env, 'wx_press'), Number(dev.lastData?.dateutc), Number(dev.lastData?.baromrelin));
+  await kvSet(env, 'wx_press', press.hist);
   await kvSet(env, 'wx_current', {
     mac: dev.macAddress, name: dev.info?.name || '', place: dev.info?.location || '',
-    fetched: new Date().toISOString(), data: dev.lastData || {},
+    fetched: new Date().toISOString(), data: dev.lastData || {}, pressTrend3h: press.trend,
   });
   const out = { station: dev.info?.name || dev.macAddress, current: !!dev.lastData };
   if (!history) return out;

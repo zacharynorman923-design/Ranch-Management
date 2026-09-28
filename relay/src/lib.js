@@ -57,6 +57,19 @@ export function wxPublic(day) {
   return out;
 }
 
+/**
+ * Keep ~4 h of [time, pressure] readings and report the 3-hour change
+ * (inHg; negative = falling). Null until readings span at least 2 hours.
+ */
+export function pressureTrend(hist, t, p) {
+  const h = (hist || []).filter(([ts]) => ts < t && ts > t - 4.5 * 3600e3);
+  if (Number.isFinite(t) && Number.isFinite(p)) h.push([t, p]);
+  const target = t - 3 * 3600e3;
+  const past = h.filter(([ts]) => ts <= t - 2 * 3600e3).sort((a, b) => Math.abs(a[0] - target) - Math.abs(b[0] - target))[0];
+  const trend = past && Number.isFinite(p) ? Math.round((p - past[1]) / ((t - past[0]) / (3 * 3600e3)) * 1000) / 1000 : null;
+  return { hist: h, trend };
+}
+
 /** Open-Meteo daily JSON → [{ date, inches }], dropping days it has no value for. */
 export function openMeteoDaily(json) {
   const t = json?.daily?.time || [];

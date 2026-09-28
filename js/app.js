@@ -119,6 +119,7 @@ function dashboard() {
       <div class="stats">
         <a href="#/stocking">${stat('Stocking', `${n1(st.herd.au)} / ${st.cap.head}`, st.status.msg, tone)}</a>
         ${WX.weatherTile()}
+        ${WX.fishingTile()}
         <a href="#/rain">${stat('Rain, 12 mo', st.rain.ratio == null ? '—' : pct(st.rain.ratio), rainSub(lastRain), st.rain.ratio != null && st.rain.ratio < 0.75 ? 'warn' : '')}</a>
         <a href="#/herd">${stat('Lb weaned / exposed', kpi.lbsPerExposed == null ? '—' : n0(kpi.lbsPerExposed), `${kpi.crop} calf crop`)}</a>
         <a href="#/census">${stat('Acres per deer', census ? n1(census.acresPerDeer) : '—', census ? `~${n0(census.population)} deer (${census.year})` : 'no census')}</a>
