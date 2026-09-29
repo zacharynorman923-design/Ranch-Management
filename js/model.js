@@ -4,7 +4,7 @@
    ========================================================================= */
 import * as db from './db.js';
 import * as C from './calc.js';
-import { photoTags } from './photos.js';
+import { photoTags, needsReview } from './photos.js';
 
 export const DEFAULTS = {
   ranchName: 'Mason County place',
@@ -84,12 +84,24 @@ export function alerts(asOf = C.today()) {
     if (last == null || last > 2) push('warn', `Relay hasn't synced ${last == null ? 'yet' : `in ${last} days`}. Open the app with signal`, '#/settings', -5);
     for (const e of s.relayLastResult?.errors || []) push('warn', `Relay: ${e}`, '#/settings', -4);
   }
-  // Trespass: a person or vehicle on a camera in the last 7 days.
+  // Trespass: a person or vehicle on a camera in the last 7 days, one alert per camera per day.
   const weekAgo = C.addDays(asOf, -7);
+  const groups = new Map();
   for (const p of db.all('photos')) {
-    if (!p.aiTags || !p.date || p.date < weekAgo) continue;
-    const hit = photoTags(p).filter((x) => x === 'person' || x === 'vehicle');
-    if (hit.length && !String(p.tags || '').split(',').map((x) => x.trim().toLowerCase()).includes('ok')) push('bad', `${hit.join(' & ')} on ${db.get('devices', p.device)?.name || 'a camera'}, ${p.date}${p.time ? ' ' + p.time : ''}. Check the photo (tag it "ok" if it was you)`, '#/photos?tag=person', -60);
+    if (!p.date || p.date < weekAgo || !needsReview(p)) continue;
+    const k = `${p.date}|${p.device || ''}`;
+    const g = groups.get(k) || { date: p.date, device: p.device, ids: [], what: new Set(), times: [] };
+    g.ids.push(p.id);
+    for (const t of photoTags(p)) if (t === 'person' || t === 'vehicle') g.what.add(t);
+    if (p.time) g.times.push(p.time);
+    groups.set(k, g);
+  }
+  for (const g of groups.values()) {
+    g.times.sort();
+    const when = g.times.length ? (g.times[0] === g.times[g.times.length - 1] ? ` ${g.times[0]}` : ` ${g.times[0]}–${g.times[g.times.length - 1]}`) : '';
+    const n = g.ids.length;
+    out.push({ tone: 'bad', sort: -60, href: '#/photos?tag=person', photos: g.ids,
+      text: `${[...g.what].sort().join(' & ')} on ${db.get('devices', g.device)?.name || 'a camera'}, ${g.date}${when}${n > 1 ? ` (${n} photos)` : ''}` });
   }
   for (const d of db.all('devices')) {
     if (d.batteryPct !== '' && d.batteryPct != null && Number(d.batteryPct) < 25) push(Number(d.batteryPct) < 10 ? 'bad' : 'warn', `${d.name}: battery ${Math.round(d.batteryPct)}%`, '#/devices', Number(d.batteryPct) - 50);

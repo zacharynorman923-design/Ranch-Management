@@ -4,7 +4,7 @@ import * as db from '../db.js';
 import * as C from '../calc.js';
 import { S, DEFAULTS } from '../model.js';
 import { APP_VERSION } from '../version.js';
-import { addPhotoFile, photoURL, deletePhoto, photoTags, isBlankPhoto } from '../photos.js';
+import { addPhotoFile, photoURL, deletePhoto, photoTags, isBlankPhoto, needsReview, markPhotosOk } from '../photos.js';
 import { openViewer } from '../viewer.js';
 import { loadSample, removeSample } from '../sample.js';
 import { syncRelay, relayStatus, relayRunNow, prunePhotos } from '../relay.js';
@@ -108,6 +108,7 @@ export function photos(params) {
       <div class="photo-filter">
         <span>Showing <b>${ps.length}</b> of ${total} photo${total === 1 ? '' : 's'}${dev ? ` from ${esc(dev.name)}` : ''}${tagFilter ? ` tagged <b>${esc(tagFilter)}</b>` : ''}${!tagFilter && emptyCount && !showBlank ? ` (${emptyCount} blank frame${emptyCount === 1 ? '' : 's'} hidden)` : ''}.</span>
         ${!tagFilter && emptyCount ? `<a class="btn sm" href="${photosHref(params, { blank: showBlank ? '' : '1' })}">${showBlank ? 'Hide blank frames' : `Show ${emptyCount} blank`}</a>` : ''}
+        ${ps.filter(needsReview).length ? `<button class="btn sm primary" data-ok-all="${esc(ps.filter(needsReview).map((p) => p.id).join(','))}">✓ Mark ${ps.filter(needsReview).length} person/vehicle photo${ps.filter(needsReview).length === 1 ? '' : 's'} OK</button>` : ''}
         ${filtered ? `<a class="btn sm" href="#/photos">Show all cameras &amp; tags</a>` : ''}
       </div>
       ${tags.length ? `<div class="chips"><a class="chip ${tagFilter ? '' : 'on'}" href="${photosHref(params, { tag: '' })}">all</a>${tags.map((t) => `<a class="chip ${t === tagFilter ? 'on' : ''}" href="${photosHref(params, { tag: t === tagFilter ? '' : t })}">${esc(t)}</a>`).join('')}</div>` : ''}
@@ -116,7 +117,8 @@ export function photos(params) {
         <figure data-photo="${esc(p.id)}"><img data-pid="${esc(p.id)}" alt="${esc(p.caption || '')}" loading="lazy">
           <figcaption>${esc(p.caption || '')}<br><small>${esc(p.date || '')}${p.temp !== '' && p.temp != null ? ` · ${esc(p.temp)}°` : ''}${p.moon ? ` · ${esc(p.moon)}` : ''}${p.loc?.lat ? ' · 📍' : ''}${p.packet ? ' · 📁' : ''}${p.tags ? ' · ' + esc(p.tags) : ''}</small>
           ${p.aiSummary ? `<br><small class="ai-label" title="Automatic label">🤖 ${esc(p.aiSummary)}</small>` : ''}
-          ${p.source === 'reveal' && !p.tags ? `<span class="quick-tags">${p.aiTags && p.aiTags !== 'empty' ? `<button class="chip on" data-qtag="${esc(p.id)}:${esc(p.aiTags)}">✓ Keep</button>` : ''}${QUICK_TAGS.map((t) => `<button class="chip" data-qtag="${esc(p.id)}:${t}">${t}</button>`).join('')}</span>` : ''}</figcaption></figure>`).join('')}</div>`
+          ${needsReview(p) ? `<span class="quick-tags"><button class="chip ok-chip" data-okone="${esc(p.id)}">✓ OK, that was us</button></span>` : ''}
+          ${p.source === 'reveal' && !p.tags && !needsReview(p) ? `<span class="quick-tags">${p.aiTags && p.aiTags !== 'empty' ? `<button class="chip on" data-qtag="${esc(p.id)}:${esc(p.aiTags)}">✓ Keep</button>` : ''}${QUICK_TAGS.map((t) => `<button class="chip" data-qtag="${esc(p.id)}:${t}">${t}</button>`).join('')}</span>` : ''}</figcaption></figure>`).join('')}</div>`
         : '<p class="empty">No photos yet.</p>'}
     </section>`;
 }
@@ -129,6 +131,11 @@ export function bindPhotos(el, rerender, params) {
     const p = db.get('photos', id);
     if (p) await db.put('photos', { ...p, tags: tag });
   }));
+  el.querySelectorAll('[data-okone]').forEach((b) => b.addEventListener('click', async (e) => { e.stopPropagation(); await markPhotosOk([b.dataset.okone]); }));
+  el.querySelector('[data-ok-all]')?.addEventListener('click', async (e) => {
+    const n = await markPhotosOk(e.currentTarget.dataset.okAll.split(','));
+    toast(`Marked ${n} photo${n === 1 ? '' : 's'} OK`);
+  });
   // Tap a photo: full-screen viewer (pinch or double-tap to zoom, swipe for the next one).
   const ids = [...el.querySelectorAll('figure[data-photo]')].map((f) => f.dataset.photo);
   el.querySelectorAll('figure[data-photo]').forEach((f) => f.addEventListener('click', () => {
