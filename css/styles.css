@@ -326,3 +326,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .4); }
 .fish-pts { flex: none; width: 40px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .good-t { color: var(--good); }
 #fishing { scroll-margin-top: 72px; }
+
+/* Photo log filter bar */
+.photo-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.photo-filter span { flex: 1 1 100%; }
+a.chip { display: inline-block; text-decoration: none; }
