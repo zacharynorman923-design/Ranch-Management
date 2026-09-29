@@ -23,6 +23,16 @@ export async function photoURL(id) {
 export const photoTags = (p) => [...new Set(String((p?.tags || '').trim() ? p.tags : p?.aiTags || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
 export const isBlankPhoto = (p) => { const t = photoTags(p); return t.length === 1 && t[0] === 'empty'; };
 
+/** A person or vehicle on camera that nobody has marked OK yet. */
+export const needsReview = (p) => { const t = photoTags(p); return (t.includes('person') || t.includes('vehicle')) && !t.includes('ok'); };
+/** Mark photos OK ("that was us"). Keeps the person/vehicle tag so they can still be found. */
+export async function markPhotosOk(ids) {
+  const recs = ids.map((id) => db.get('photos', id)).filter(Boolean)
+    .map((p) => ({ ...p, tags: [...photoTags(p).filter((t) => t !== 'ok' && t !== 'empty'), 'ok'].join(', ') }));
+  if (recs.length) await db.putMany('photos', recs);
+  return recs.length;
+}
+
 /** Store a picked/captured image file as a 'photos' record + blob. */
 export async function addPhotoFile(file, meta = {}) {
   const buf = await file.arrayBuffer();

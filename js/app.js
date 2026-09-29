@@ -13,6 +13,8 @@ import * as M from './pages/money.js';
 import * as O from './pages/ops.js';
 import * as WX from './pages/weather.js';
 import { APP_VERSION } from './version.js';
+import { photoURL, markPhotosOk } from './photos.js';
+import { openViewer } from './viewer.js';
 
 const ROUTES = {
   home: { title: 'Dashboard', group: '', render: dashboard, bind: bindDashboard },
@@ -129,7 +131,14 @@ function dashboard() {
     </section>
     <section class="panel">
       <div class="panel-head"><h2>Needs attention</h2>${pill(`${al.length}`, al.some((a) => a.tone === 'bad') ? 'bad' : al.length ? 'warn' : 'good')}</div>
-      ${al.length ? `<ul class="alerts">${al.slice(0, 20).map((a) => `<li class="${a.tone}"><a href="${a.href}">${esc(a.text)}</a></li>`).join('')}</ul>` : '<p class="empty">All clear.</p>'}
+      ${al.length ? `<ul class="alerts">${al.slice(0, 20).map((a) => (a.photos ? `<li class="${a.tone} cam-alert">
+          <img class="cam-alert-thumb" data-pid="${esc(a.photos[0])}" data-view="${esc(a.photos.join(','))}" alt="Camera photo">
+          <div class="grow"><div>📷 ${esc(a.text)}</div>
+            <div class="cam-alert-actions"><button class="btn sm" data-view="${esc(a.photos.join(','))}">View</button>
+            <button class="btn sm primary" data-ok="${esc(a.photos.join(','))}">✓ OK, that was us</button></div></div></li>`
+        : `<li class="${a.tone}"><a href="${a.href}">${esc(a.text)}</a></li>`)).join('')}</ul>
+        ${al.filter((a) => a.photos).length > 1 ? `<div class="head-actions"><button class="btn" data-ok="${esc(al.flatMap((a) => a.photos || []).join(','))}">✓ All camera alerts OK (${al.flatMap((a) => a.photos || []).length} photos)</button></div>` : ''}`
+        : '<p class="empty">All clear.</p>'}
     </section>
     <section class="panel">
       <div class="panel-head"><h2>Quick log</h2></div>
@@ -154,6 +163,13 @@ function rainSub(lastRain) {
 }
 function bindDashboard(el) {
   el.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => openForm(b.dataset.q)));
+  // Person/vehicle camera alerts: view the photos, or mark them OK in one tap.
+  el.querySelectorAll('img.cam-alert-thumb[data-pid]').forEach(async (img) => { img.src = (await photoURL(img.dataset.pid)) || ''; });
+  el.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => openViewer(b.dataset.view.split(','), 0)));
+  el.querySelectorAll('[data-ok]').forEach((b) => b.addEventListener('click', async () => {
+    const n = await markPhotosOk(b.dataset.ok.split(','));
+    toast(`Marked ${n} photo${n === 1 ? '' : 's'} OK`);
+  }));
   el.querySelector('[data-sample]')?.addEventListener('click', async () => {
     const { loadSample } = await import('./sample.js');
     await loadSample();

@@ -3,11 +3,11 @@
    camera photo is swapped for the full-resolution original from the relay so
    zooming shows real detail. The tag buttons correct the AI's label. */
 import * as db from './db.js';
-import { photoURL, photoTags } from './photos.js';
+import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
 import { relayPhotoBlob } from './relay.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'nothing'];
+const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
 const MAX_ZOOM = 6;
 
 export function openViewer(ids, index = 0, { onEdit } = {}) {
@@ -27,6 +27,7 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
     <button type="button" class="v-nav v-next" data-next aria-label="Next photo">›</button>
     <div class="v-bottom">
       <div class="v-ai" data-ai></div>
+      <button type="button" class="v-ok" data-okay hidden>✓ OK, that was us</button>
       <div class="v-tags" data-tags></div>
       <div class="v-actions"><span class="v-count" data-count></span><span class="v-hd" data-hd></span>
         <a class="v-btn" data-save download>Save</a>${onEdit ? '<button type="button" class="v-btn" data-edit>Edit details</button>' : ''}</div>
@@ -75,6 +76,7 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
       const on = t === 'nothing' ? eff.length === 1 && eff[0] === 'empty' : eff.includes(t);
       return `<button type="button" class="v-tag ${on ? 'on' : ''}" data-fix="${t}">${t}</button>`;
     }).join('');
+    $('[data-okay]').hidden = !needsReview(p);
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;
     $('[data-next]').hidden = i === ids.length - 1;
@@ -177,6 +179,14 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
     if (e.target.closest('[data-x]')) return close();
     if (e.target.closest('[data-prev]')) return go(-1);
     if (e.target.closest('[data-next]')) return go(1);
+    if (e.target.closest('[data-okay]')) {
+      await markPhotosOk([ids[i]]);
+      renderInfo();
+      // Next photo in a burst that still needs a look.
+      const k = ids.findIndex((id, j) => j > i && needsReview(db.get('photos', id)));
+      if (k > 0) setTimeout(() => show(k), 350);
+      return;
+    }
     const fix = e.target.closest('[data-fix]');
     if (fix) {
       const p = db.get('photos', ids[i]);

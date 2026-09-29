@@ -357,3 +357,10 @@ dialog.viewer::backdrop { background: #000; }
 @media (hover: none) { .v-nav { display: none; } }
 .viewer.bare .v-top, .viewer.bare .v-bottom, .viewer.bare .v-nav, .viewer.zoomed .v-nav { opacity: 0; pointer-events: none; }
 .gallery figure img { cursor: zoom-in; }
+
+/* Person/vehicle camera alerts */
+.alerts li.cam-alert { display: flex; gap: 10px; align-items: flex-start; }
+.cam-alert-thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 6px; background: var(--line); flex: none; cursor: zoom-in; }
+.cam-alert-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.chip.ok-chip { background: var(--good); border-color: var(--good); color: #fff; font-weight: 600; }
+.v-ok { font: inherit; font-size: 16px; font-weight: 700; padding: 11px 14px; border-radius: 12px; border: 0; background: #2F9E55; color: #fff; }
