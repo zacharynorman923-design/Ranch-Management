@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import worker from '../relay/src/index.js';
 import * as L from '../relay/src/lib.js';
 import { pollAmbient } from '../relay/src/weather.js';
+import { classifyPending } from '../relay/src/classify.js';
 
 /* Minimal D1 look-alike: prepare().bind().first/all/run and batch(). */
 function fakeD1() {
@@ -346,4 +347,38 @@ test('weather: current conditions, daily history with backfill, gauge rain', { t
   urls.length = 0;
   await pollAmbient(env, { history: false });
   assert.deepEqual(urls, ['/v1/devices']);
+});
+
+test('classifier: hog rules — javelina, unsure guesses, evidence first, recent hog labels re-checked once', { timeout: 30000 }, async (t) => {
+  assert.deepEqual(L.tagsFromLabels({ empty: false, animals: [{ species: 'javelina', id_confidence: 'high' }] }), ['javelina']);
+  assert.deepEqual(L.tagsFromLabels({ empty: false, animals: [{ species: 'feral hog', id_confidence: 'low' }, { species: 'person', id_confidence: 'low' }] }), ['unsure', 'person']);
+  const item = L.LABEL_SCHEMA.properties.animals.items;
+  assert.equal(Object.keys(item.properties)[0], 'evidence');
+  assert.ok(item.required.includes('id_confidence'));
+
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const req = url instanceof Request ? url : new Request(String(url), opts);
+    sent.push(JSON.parse(await req.text()));
+    return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify({ empty: false, animals: [{ evidence: 'grizzled coat, pale collar, short snout', species: 'javelina', id_confidence: 'high', count: 3, sex: 'unknown', antler_points: 0 }], summary: '3 javelina', confidence: 'high' }) }],
+      usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), ANTHROPIC_API_KEY: 'k' };
+  const now = new Date().toISOString(), old = new Date(Date.now() - 60 * 86400e3).toISOString();
+  for (const [id, taken, tags] of [['h1', now, 'hog'], ['h2', old, 'hog'], ['d1', now, 'doe']]) {
+    await env.DB.prepare("INSERT INTO photos (id, camera_id, camera, taken, fetched_at) VALUES (?1, 'c', 'Cam', ?2, ?2)").bind(id, taken).run();
+    await env.DB.prepare("INSERT INTO photo_labels (id, url, status, attempts, tags, updated) VALUES (?1, 'https://s3.test/x.jpg', 'done', 1, ?2, ?3)").bind(id, tags, old).run();
+  }
+  const r = await classifyPending(env);
+  assert.equal(r.labeled, 1); // only the recent hog photo
+  assert.match(sent[0].system, /flat disc nose/);
+  assert.match(sent[0].system, /javelina/);
+  const row = await env.DB.prepare("SELECT tags, summary FROM photo_labels WHERE id = 'h1'").first();
+  assert.equal(row.tags, 'javelina');
+  assert.equal((await env.DB.prepare("SELECT tags FROM photo_labels WHERE id = 'h2'").first()).tags, 'hog'); // too old to re-check
+  sent.length = 0;
+  assert.equal((await classifyPending(env)).labeled, 0); // the re-check runs once
 });

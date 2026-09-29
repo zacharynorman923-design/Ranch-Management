@@ -4,6 +4,7 @@
    ========================================================================= */
 import * as db from './db.js';
 import * as C from './calc.js';
+import { photoTags } from './photos.js';
 
 export const DEFAULTS = {
   ranchName: 'Mason County place',
@@ -87,7 +88,7 @@ export function alerts(asOf = C.today()) {
   const weekAgo = C.addDays(asOf, -7);
   for (const p of db.all('photos')) {
     if (!p.aiTags || !p.date || p.date < weekAgo) continue;
-    const hit = String(p.aiTags).split(',').map((x) => x.trim()).filter((x) => x === 'person' || x === 'vehicle');
+    const hit = photoTags(p).filter((x) => x === 'person' || x === 'vehicle');
     if (hit.length && !String(p.tags || '').split(',').map((x) => x.trim().toLowerCase()).includes('ok')) push('bad', `${hit.join(' & ')} on ${db.get('devices', p.device)?.name || 'a camera'}, ${p.date}${p.time ? ' ' + p.time : ''}. Check the photo (tag it "ok" if it was you)`, '#/photos?tag=person', -60);
   }
   for (const d of db.all('devices')) {

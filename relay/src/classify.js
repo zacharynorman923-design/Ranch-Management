@@ -11,7 +11,11 @@ const DEFAULT_MODEL = 'claude-opus-5';
 const SYSTEM = `You label trail-camera photos for a 250-acre ranch in Mason County, Texas (Edwards Plateau / Hill Country).
 Photos are often infrared black-and-white at night, motion-blurred, partly out of frame, or triggered by wind-blown grass.
 Count every individual you can actually see. For white-tailed deer: "buck" only if antlers (or fresh pedicels) are visible, "fawn" if spotted or clearly this year's young, otherwise "doe" when clearly antlerless and adult, else "unknown". Estimate antler points only when the rack is clearly visible; otherwise 0.
-Axis and fallow deer are common exotics here; feral hogs, coyotes, bobcats, raccoons, turkeys and armadillos are common too.
+Axis and fallow deer are common exotics here; feral hogs, coyotes, bobcats, raccoons, turkeys and armadillos are common too. This is a cattle ranch, so cows and calves (often black Angus) walk past cameras, and javelina occur here too.
+Feral hog: only when you can see the diagnostic features: a long, wedge-shaped snout ending in a flat disc nose, no visible neck (head blends into the shoulders), a low barrel body with a ridge of coarse bristles along the back, short legs, and a thin straight tail. A dark, low shape by the feeder is NOT enough.
+Things that get mistaken for hogs, so rule them out: javelina (smaller, 40–60 lb, grizzled salt-and-pepper coat with a pale collar band, short snout, no visible tail); black calves and cows (longer legs, ears sticking out sideways, broad blocky face, dewlap); deer with their heads down feeding or bedded, which look low and dark in infrared; armadillos, raccoons, skunks; and rocks, stumps, feeder legs, shadows, feed piles or water troughs.
+Before choosing a species, write in "evidence" what you actually see. If the animal is too dark, blurred, distant or partly out of frame to see those features, set id_confidence to "low".
+Never report an animal you can't point to in the frame.
 If a person or vehicle is in frame, list it (species "person" or "vehicle") — the owner uses this to spot trespassing.
 Ignore the camera's own date/time/temperature banner. Don't guess: when unsure of species or sex, say so with "unknown"/"other" and lower confidence.`;
 
@@ -52,6 +56,14 @@ export async function classifyPending(env) {
   const backfill = new Date(Date.now() - Number(env.CLASSIFY_BACKFILL_DAYS || 3) * 86400000).toISOString();
   await env.DB.prepare(`INSERT OR IGNORE INTO photo_labels (id, status, updated)
     SELECT id, 'pending', ?1 FROM photos WHERE taken > ?2`).bind(now, backfill).run();
+
+  // Labels made before the hog rules were tightened: check recent hog photos again, once.
+  if (!(await kvGet(env, 'relabel_hogs_v2'))) {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    await env.DB.prepare(`UPDATE photo_labels SET status = 'pending', attempts = 0, updated = ?1
+      WHERE status = 'done' AND tags LIKE '%hog%' AND id IN (SELECT id FROM photos WHERE taken > ?2)`).bind(now, since).run();
+    await kvSet(env, 'relabel_hogs_v2', now);
+  }
 
   const day = (await kvGet(env, 'cls_day')) || {};
   let used = day.date === today ? day.n : 0;

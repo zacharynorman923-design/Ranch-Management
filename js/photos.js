@@ -16,6 +16,13 @@ export async function photoURL(id) {
   return data;
 }
 
+/**
+ * A photo's tags: yours when you've tagged it, otherwise the AI's. Your tag
+ * always wins, so correcting a wrong "hog" takes it out of the hog counts.
+ */
+export const photoTags = (p) => [...new Set(String((p?.tags || '').trim() ? p.tags : p?.aiTags || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
+export const isBlankPhoto = (p) => { const t = photoTags(p); return t.length === 1 && t[0] === 'empty'; };
+
 /** Store a picked/captured image file as a 'photos' record + blob. */
 export async function addPhotoFile(file, meta = {}) {
   const buf = await file.arrayBuffer();

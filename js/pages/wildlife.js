@@ -2,6 +2,7 @@
 import * as db from '../db.js';
 import * as C from '../calc.js';
 import { S, latestCensus } from '../model.js';
+import { photoTags, isBlankPhoto } from '../photos.js';
 import { esc, n0, n1, n2, stat, pill, listPanel, dateLabel, daysLabel, toast } from '../ui.js';
 
 /* --------------------------------- deer ---------------------------------- */
@@ -110,7 +111,7 @@ export function devices() {
         <div class="card">
           <div class="card-head"><b>${esc(d.name)}</b><small>${esc(d.type)}</small></div>
           <div class="card-body">${due(d) || '<span class="muted">no service dates yet</span>'}
-            ${d.type === 'camera' ? (() => { const mine = photos.filter((p) => p.device === d.id); const blank = mine.filter((p) => p.aiTags === 'empty' && !p.tags).length; return `<div class="muted small">${mine.length} photos on this phone${blank ? `, ${blank} blank (AI found nothing in them)` : ''}</div>`; })() : ''}</div>
+            ${d.type === 'camera' ? (() => { const mine = photos.filter((p) => p.device === d.id); const blank = mine.filter(isBlankPhoto).length; return `<div class="muted small">${mine.length} photos on this phone${blank ? `, ${blank} blank (AI found nothing in them)` : ''}</div>`; })() : ''}</div>
           <div class="card-foot">
             ${['feeder', 'protein'].includes(d.type) ? `<button class="btn sm" data-svc="${esc(d.id)}:refill">Filled</button>` : ''}
             ${d.type !== 'blind' ? `<button class="btn sm" data-svc="${esc(d.id)}:battery">Batteries</button>` : ''}
@@ -139,15 +140,15 @@ export function bindDevices(el) {
 }
 
 /* What the cameras saw in the last 30 days, from the automatic photo labels. */
-const ACTIVITY_TAGS = ['buck', 'doe', 'fawn', 'hog', 'predator', 'turkey', 'exotic', 'person'];
+const ACTIVITY_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'predator', 'turkey', 'exotic', 'person'];
 function activityPanel() {
   const since = C.addDays(C.today(), -30);
-  const photos = db.all('photos').filter((p) => p.aiTags && p.aiTags !== 'empty' && p.date >= since);
+  const photos = db.all('photos').filter((p) => p.date >= since && photoTags(p).length && !isBlankPhoto(p));
   if (!photos.length) return '';
   const byCam = new Map();
   const buckHours = Array(24).fill(0);
   for (const p of photos) {
-    const tags = String(p.aiTags).split(',').map((x) => x.trim());
+    const tags = photoTags(p);
     const cam = db.get('devices', p.device)?.name || 'Other';
     const row = byCam.get(cam) || Object.fromEntries(ACTIVITY_TAGS.map((t) => [t, 0]));
     for (const t of tags) if (t in row) row[t]++;
