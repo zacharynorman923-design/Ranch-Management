@@ -195,6 +195,12 @@ export async function prunePhotos() {
   return old.length;
 }
 
+/** Full-resolution original of a camera photo from the relay (null if it's gone or offline). */
+export async function relayPhotoBlob(photoId) {
+  if (!relayConfigured() || !navigator.onLine || !String(photoId).startsWith('reveal-')) return null;
+  try { return await call(`/photo/${encodeURIComponent(String(photoId).slice(7))}`, { as: 'blob' }); } catch { return null; }
+}
+
 export async function relayStatus() {
   return call('/status');
 }

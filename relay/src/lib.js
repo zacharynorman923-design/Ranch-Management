@@ -123,7 +123,7 @@ export function safeEqual(a, b) {
 
 /* ------------------------------ classifier ------------------------------- */
 export const SPECIES = [
-  'white-tailed deer', 'axis deer', 'fallow deer', 'other exotic deer', 'feral hog', 'wild turkey',
+  'white-tailed deer', 'axis deer', 'fallow deer', 'other exotic deer', 'feral hog', 'javelina', 'wild turkey',
   'coyote', 'bobcat', 'mountain lion', 'gray fox', 'raccoon', 'skunk', 'armadillo', 'opossum',
   'rabbit', 'dove', 'quail', 'other bird', 'cattle', 'goat', 'sheep', 'horse', 'dog', 'cat',
   'person', 'vehicle', 'other',
@@ -141,9 +141,11 @@ export const LABEL_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['species', 'count', 'sex', 'antler_points'],
+        required: ['evidence', 'species', 'id_confidence', 'count', 'sex', 'antler_points'],
         properties: {
+          evidence: { type: 'string', description: 'What you can actually see that identifies it (e.g. "long wedge snout with flat disc nose, no neck, coarse black hair"). Written before choosing the species.' },
           species: { type: 'string', enum: SPECIES },
+          id_confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How sure the species is. Low when only a dark shape, eyeshine, part of a body or a blur is visible.' },
           count: { type: 'integer', description: 'Individuals of this species/sex visible.' },
           sex: { type: 'string', enum: ['buck', 'doe', 'fawn', 'male', 'female', 'young', 'unknown'], description: 'For deer use buck/doe/fawn; otherwise male/female/young/unknown.' },
           antler_points: { type: 'integer', description: 'Best estimate of total antler points for a buck when clearly visible, else 0.' },
@@ -163,6 +165,8 @@ export function tagsFromLabels(l) {
   const t = new Set();
   for (const a of l.animals) {
     const s = a.species;
+    // A guess (just a shape or eyeshine) isn't worth a species tag, except people and vehicles.
+    if (a.id_confidence === 'low' && s !== 'person' && s !== 'vehicle') { t.add('unsure'); continue; }
     if (s === 'white-tailed deer') t.add(['buck', 'doe', 'fawn'].includes(a.sex) ? a.sex : 'deer');
     else if (s === 'feral hog') t.add('hog');
     else if (s === 'wild turkey') t.add('turkey');

@@ -4,7 +4,8 @@ import * as db from '../db.js';
 import * as C from '../calc.js';
 import { S, DEFAULTS } from '../model.js';
 import { APP_VERSION } from '../version.js';
-import { addPhotoFile, photoURL, deletePhoto } from '../photos.js';
+import { addPhotoFile, photoURL, deletePhoto, photoTags, isBlankPhoto } from '../photos.js';
+import { openViewer } from '../viewer.js';
 import { loadSample, removeSample } from '../sample.js';
 import { syncRelay, relayStatus, relayRunNow, prunePhotos } from '../relay.js';
 import { esc, stat, pill, listPanel, dateLabel, daysLabel, toast, download, openForm } from '../ui.js';
@@ -70,7 +71,7 @@ export function contacts() {
 }
 
 /* --------------------------------- photos -------------------------------- */
-const QUICK_TAGS = ['buck', 'doe', 'hog', 'predator', 'turkey'];
+const QUICK_TAGS = ['buck', 'doe', 'hog', 'javelina', 'cattle', 'predator', 'turkey'];
 /* Filters live in the address (#/photos?device=…&tag=…&blank=1), so opening
    the Photo log from the menu always shows everything. */
 const photosHref = (params, changes) => {
@@ -87,9 +88,9 @@ export function photos(params) {
   let ps = db.all('photos').sort((a, b) => (when(a) < when(b) ? 1 : -1));
   if (device) ps = ps.filter((p) => p.device === device);
   const total = ps.length;
-  const tagList = (p) => [...new Set(`${p.tags || ''},${p.aiTags || ''}`.toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
+  const tagList = photoTags;
   const tags = [...new Set(ps.flatMap(tagList))].sort();
-  const isBlank = (p) => p.aiTags === 'empty' && !p.tags;
+  const isBlank = isBlankPhoto;
   const emptyCount = ps.filter(isBlank).length;
   if (tagFilter) ps = ps.filter((p) => tagList(p).includes(tagFilter));
   else if (!showBlank) ps = ps.filter((p) => !isBlank(p)); // hide blank frames unless asked
@@ -128,10 +129,16 @@ export function bindPhotos(el, rerender, params) {
     const p = db.get('photos', id);
     if (p) await db.put('photos', { ...p, tags: tag });
   }));
-  el.querySelectorAll('figure[data-photo]').forEach((f) => f.addEventListener('click', async () => {
-    const p = db.get('photos', f.dataset.photo);
-    const r = await openForm('photos', p);
-    if (!r && !db.get('photos', p.id)) await deletePhoto(p.id);
+  // Tap a photo: full-screen viewer (pinch or double-tap to zoom, swipe for the next one).
+  const ids = [...el.querySelectorAll('figure[data-photo]')].map((f) => f.dataset.photo);
+  el.querySelectorAll('figure[data-photo]').forEach((f) => f.addEventListener('click', () => {
+    openViewer(ids, ids.indexOf(f.dataset.photo), {
+      onEdit: async (id) => {
+        const p = db.get('photos', id);
+        const r = await openForm('photos', p);
+        if (!r && !db.get('photos', id)) await deletePhoto(id);
+      },
+    });
   }));
   el.querySelector('[data-upload]')?.addEventListener('change', async (e) => {
     const files = [...e.target.files];

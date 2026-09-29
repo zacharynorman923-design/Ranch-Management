@@ -105,7 +105,11 @@ export function openForm(col, rec = null, preset = {}) {
       }
     };
     const bindPhotos = () => {
-      dlg.querySelectorAll('.thumb[data-pid]').forEach(async (img) => { img.src = (await photoURL(img.dataset.pid)) || ''; });
+      const pids = [...dlg.querySelectorAll('.thumb[data-pid]')].map((x) => x.dataset.pid);
+      dlg.querySelectorAll('.thumb[data-pid]').forEach(async (img) => {
+        img.src = (await photoURL(img.dataset.pid)) || '';
+        img.onclick = async () => (await import('./viewer.js')).openViewer(pids, pids.indexOf(img.dataset.pid));
+      });
     };
 
     dlg.addEventListener('change', (e) => {
