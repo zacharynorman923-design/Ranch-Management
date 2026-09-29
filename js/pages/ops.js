@@ -70,21 +70,30 @@ export function contacts() {
 }
 
 /* --------------------------------- photos -------------------------------- */
-let tagFilter = '';
-let lastTagParam = null;
 const QUICK_TAGS = ['buck', 'doe', 'hog', 'predator', 'turkey'];
+/* Filters live in the address (#/photos?device=…&tag=…&blank=1), so opening
+   the Photo log from the menu always shows everything. */
+const photosHref = (params, changes) => {
+  const q = new URLSearchParams(params);
+  for (const [k, v] of Object.entries(changes)) (v ? q.set(k, v) : q.delete(k));
+  const qs = q.toString();
+  return `#/photos${qs ? `?${qs}` : ''}`;
+};
 export function photos(params) {
   const device = params.get('device') || '';
-  const tp = params.get('tag');
-  if (tp !== lastTagParam) { if (tp) tagFilter = tp; lastTagParam = tp; }
+  const tagFilter = params.get('tag') || '';
+  const showBlank = params.get('blank') === '1';
   const when = (x) => `${x.date || ''} ${x.time || ''}`;
   let ps = db.all('photos').sort((a, b) => (when(a) < when(b) ? 1 : -1));
   if (device) ps = ps.filter((p) => p.device === device);
+  const total = ps.length;
   const tagList = (p) => [...new Set(`${p.tags || ''},${p.aiTags || ''}`.toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
-  const tags = [...new Set(db.all('photos').flatMap(tagList))].sort();
-  const emptyCount = ps.filter((p) => p.aiTags === 'empty' && !p.tags).length;
+  const tags = [...new Set(ps.flatMap(tagList))].sort();
+  const isBlank = (p) => p.aiTags === 'empty' && !p.tags;
+  const emptyCount = ps.filter(isBlank).length;
   if (tagFilter) ps = ps.filter((p) => tagList(p).includes(tagFilter));
-  else ps = ps.filter((p) => !(p.aiTags === 'empty' && !p.tags)); // hide blank frames unless asked
+  else if (!showBlank) ps = ps.filter((p) => !isBlank(p)); // hide blank frames unless asked
+  const filtered = device || tagFilter;
   const dev = device ? db.get('devices', device) : null;
   return `
     <section class="panel">
@@ -94,8 +103,14 @@ export function photos(params) {
       <p class="note">Photos keep their GPS and date from the camera. A photo you just took gets the phone's GPS instead. Trail-cam dumps usually have no GPS, so pick the camera and they inherit its location. Tag them <i>buck, doe, hog, predator</i> to build a picture of what's moving where.</p>
       ${dev ? '' : `<div class="form-grid"><label class="field">Trail camera for this upload<select data-updev><option value="">—</option>${db.all('devices').filter((d) => d.type === 'camera').map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label>
         <label class="field">Tags for this upload<input data-uptags placeholder="buck, feeder 2"></label></div>`}
-      ${db.all('photos').some((p) => p.aiTags) ? `<p class="note">🤖 Camera photos are labeled automatically. Tap <b>✓ Keep</b> to accept a label, or a tag to correct it.${emptyCount && !tagFilter ? ` ${emptyCount} empty frames hidden (tap <i>empty</i> to see them).` : ''}</p>` : ''}
-      ${tags.length ? `<div class="chips"><button class="chip ${tagFilter ? '' : 'on'}" data-tag="">all</button>${tags.map((t) => `<button class="chip ${t === tagFilter ? 'on' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+      ${db.all('photos').some((p) => p.aiTags) ? '<p class="note">🤖 Camera photos are labeled automatically. Tap <b>✓ Keep</b> to accept a label, or a tag to correct it.</p>' : ''}
+      <div class="photo-filter">
+        <span>Showing <b>${ps.length}</b> of ${total} photo${total === 1 ? '' : 's'}${dev ? ` from ${esc(dev.name)}` : ''}${tagFilter ? ` tagged <b>${esc(tagFilter)}</b>` : ''}${!tagFilter && emptyCount && !showBlank ? ` (${emptyCount} blank frame${emptyCount === 1 ? '' : 's'} hidden)` : ''}.</span>
+        ${!tagFilter && emptyCount ? `<a class="btn sm" href="${photosHref(params, { blank: showBlank ? '' : '1' })}">${showBlank ? 'Hide blank frames' : `Show ${emptyCount} blank`}</a>` : ''}
+        ${filtered ? `<a class="btn sm" href="#/photos">Show all cameras &amp; tags</a>` : ''}
+      </div>
+      ${tags.length ? `<div class="chips"><a class="chip ${tagFilter ? '' : 'on'}" href="${photosHref(params, { tag: '' })}">all</a>${tags.map((t) => `<a class="chip ${t === tagFilter ? 'on' : ''}" href="${photosHref(params, { tag: t === tagFilter ? '' : t })}">${esc(t)}</a>`).join('')}</div>` : ''}
+      ${ps.length > 120 ? `<p class="small muted">The newest 120 are shown. Pick a camera or tag to narrow it down.</p>` : ''}
       ${ps.length ? `<div class="gallery">${ps.slice(0, 120).map((p) => `
         <figure data-photo="${esc(p.id)}"><img data-pid="${esc(p.id)}" alt="${esc(p.caption || '')}" loading="lazy">
           <figcaption>${esc(p.caption || '')}<br><small>${esc(p.date || '')}${p.temp !== '' && p.temp != null ? ` · ${esc(p.temp)}°` : ''}${p.moon ? ` · ${esc(p.moon)}` : ''}${p.loc?.lat ? ' · 📍' : ''}${p.packet ? ' · 📁' : ''}${p.tags ? ' · ' + esc(p.tags) : ''}</small>
@@ -106,7 +121,6 @@ export function photos(params) {
 }
 export function bindPhotos(el, rerender, params) {
   el.querySelectorAll('img[data-pid]').forEach(async (img) => { img.src = (await photoURL(img.dataset.pid)) || ''; });
-  el.querySelectorAll('[data-tag]').forEach((b) => b.addEventListener('click', () => { tagFilter = b.dataset.tag; rerender(); }));
   el.querySelectorAll('[data-qtag]').forEach((b) => b.addEventListener('click', async (e) => {
     e.stopPropagation();
     const i = b.dataset.qtag.indexOf(':');

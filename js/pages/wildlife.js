@@ -110,7 +110,7 @@ export function devices() {
         <div class="card">
           <div class="card-head"><b>${esc(d.name)}</b><small>${esc(d.type)}</small></div>
           <div class="card-body">${due(d) || '<span class="muted">no service dates yet</span>'}
-            ${d.type === 'camera' ? `<div class="muted small">${photos.filter((p) => p.device === d.id).length} photos on this phone</div>` : ''}</div>
+            ${d.type === 'camera' ? (() => { const mine = photos.filter((p) => p.device === d.id); const blank = mine.filter((p) => p.aiTags === 'empty' && !p.tags).length; return `<div class="muted small">${mine.length} photos on this phone${blank ? `, ${blank} blank (AI found nothing in them)` : ''}</div>`; })() : ''}</div>
           <div class="card-foot">
             ${['feeder', 'protein'].includes(d.type) ? `<button class="btn sm" data-svc="${esc(d.id)}:refill">Filled</button>` : ''}
             ${d.type !== 'blind' ? `<button class="btn sm" data-svc="${esc(d.id)}:battery">Batteries</button>` : ''}
