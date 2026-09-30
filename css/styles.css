@@ -412,3 +412,15 @@ dialog.viewer::backdrop { background: #000; }
 .mini-hours span { display: block; background: var(--accent); min-height: 1px; border-radius: 1px 1px 0 0; }
 tr.best-row td { font-weight: 700; }
 .seg { flex-wrap: wrap; }
+
+/* Census: tappable numbers */
+.stat-btn { font: inherit; color: inherit; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; display: block; }
+.stat-btn:disabled { cursor: default; }
+.stat-btn:not(:disabled) .stat { box-shadow: inset 0 0 0 1px var(--accent); }
+.stat-btn:not(:disabled) .stat::after { content: 'tap to see photos ›'; display: block; font-size: 11px; color: var(--accent); margin-top: 4px; }
+.census-chips { margin-bottom: 6px; }
+.chip.warn-chip { border-color: var(--warn); color: var(--warn); }
+.v-census { font-size: 13px; line-height: 1.45; border-top: 1px solid rgba(255,255,255,.2); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.v-cnt { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
+.v-cnt button { font: inherit; width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,.45); background: rgba(255,255,255,.08); color: #fff; }
+.v-cnt b { min-width: 14px; text-align: center; }

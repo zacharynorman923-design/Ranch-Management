@@ -31,6 +31,8 @@ export function deerCounts(labels) {
 export function photoDeer(p) {
   const mine = String(p?.tags || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
   const fromTags = (tags) => ({ buck: +tags.includes('buck'), doe: +tags.includes('doe'), fawn: +tags.includes('fawn'), deer: +tags.includes('deer') });
+  // Counts you set by hand (in the viewer from the census) beat everything.
+  if (p?.counts) return { buck: 0, doe: 0, fawn: 0, deer: 0, ...p.counts };
   if (mine.length) return fromTags(mine);
   if (p?.aiCounts) return { buck: 0, doe: 0, fawn: 0, deer: 0, ...p.aiCounts };
   return fromTags(String(p?.aiTags || '').toLowerCase().split(',').map((x) => x.trim()));
@@ -89,16 +91,46 @@ export function censusCorrection(days) {
 }
 
 /**
+ * Group photos into visits: the same camera, each photo within `gapMin`
+ * minutes of the one before. A burst of the same doe standing at the feeder
+ * is one visit, counted once at the most of each kind seen in any single
+ * photo of the visit. gapMin 0 counts every photo on its own.
+ */
+export function censusVisits(photos, gapMin = 5) {
+  const at = (p) => photoTime(p)?.getTime();
+  const sorted = [...photos].sort((a, b) => String(a.device || '').localeCompare(String(b.device || '')) || (at(a) ?? 0) - (at(b) ?? 0));
+  const visits = [];
+  let cur = null;
+  for (const p of sorted) {
+    const t = p.time ? at(p) : null;
+    const join = cur && gapMin > 0 && t != null && cur.last != null && (p.device || '') === cur.device && t - cur.last <= gapMin * 60000;
+    if (!join) { cur = { device: p.device || '', ids: [], start: t, last: t, counts: { buck: 0, doe: 0, fawn: 0, deer: 0 }, bucks: new Set() }; visits.push(cur); }
+    cur.ids.push(p.id);
+    if (t != null) cur.last = t;
+    const c = photoDeer(p);
+    for (const k of Object.keys(cur.counts)) cur.counts[k] = Math.max(cur.counts[k], c[k] || 0);
+    if (p.buck) cur.bucks.add(p.buck);
+  }
+  return visits;
+}
+
+/**
  * Camera census from photos in the survey window.
  * photos: records in the window; uniqueBucks: named bucks seen in it.
+ * gapMin: photos from one camera closer together than this are one visit.
+ * Also returns which photos feed each number, so they can be checked.
  */
-export function cameraCensus({ photos, uniqueBucks, days, acres }) {
+export function cameraCensus({ photos, uniqueBucks, days, acres, gapMin = 0 }) {
   const occ = { buck: 0, doe: 0, fawn: 0, deer: 0 };
+  const photosFor = { buck: [], doe: [], fawn: [], deer: [], unidentified: [] };
+  const visitOf = {};
   let unidentified = 0;
-  for (const p of photos) {
-    const c = photoDeer(p);
-    for (const k of Object.keys(occ)) occ[k] += c[k] || 0;
-    if (c.buck && !p.buck) unidentified++;
+  const visits = censusVisits(photos, gapMin);
+  for (const v of visits) {
+    for (const k of Object.keys(occ)) { occ[k] += v.counts[k]; if (v.counts[k]) photosFor[k].push(...v.ids); }
+    // A visit with a buck in it but no photo tied to a named buck.
+    if (v.counts.buck && !v.bucks.size) { unidentified++; photosFor.unidentified.push(...v.ids); }
+    for (const id of v.ids) visitOf[id] = v;
   }
   const corr = censusCorrection(days);
   const factor = occ.buck > 0 && uniqueBucks > 0 ? uniqueBucks / occ.buck : null;
@@ -107,7 +139,7 @@ export function cameraCensus({ photos, uniqueBucks, days, acres }) {
   } : null;
   if (est) est.total = est.bucks + est.does + est.fawns;
   return {
-    photos: photos.length, occ, uniqueBucks, unidentified, factor, correction: corr, est,
+    photos: photos.length, visits: visits.length, occ, uniqueBucks, unidentified, factor, correction: corr, est, photosFor, visitOf,
     doesPerBuck: occ.buck ? occ.doe / occ.buck : null,
     fawnsPerDoe: occ.doe ? occ.fawn / occ.doe : null,
     acresPerDeer: est?.total && acres ? acres / est.total : null,
