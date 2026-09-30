@@ -5,6 +5,8 @@ import * as db from '../db.js';
 import * as H from '../hunting.js';
 import { esc, stat, pill } from '../ui.js';
 import { stationContext } from './weather.js';
+import { ranchPlace, coordsWarning } from '../place.js';
+import { sunTimes } from '../calc.js';
 
 const TONE = { excellent: 'good', good: 'good', fair: 'warn', poor: 'bad', closed: '', unsafe: 'bad' };
 const clock = (ms) => (ms == null ? '—' : new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
@@ -13,7 +15,8 @@ const open = new Set();
 
 function outlooks() {
   const x = stationContext();
-  const ctx = x ? { data: x.data, pressTrend: x.pressTrend, dailyAvgTemps: x.dailyAvgTemps, lat: x.lat, lon: x.lon } : { data: {} };
+  const pl = ranchPlace();
+  const ctx = x ? { data: x.data, pressTrend: x.pressTrend, dailyAvgTemps: x.dailyAvgTemps, lat: x.lat, lon: x.lon } : { data: {}, lat: pl.lat, lon: pl.lon };
   const rank = (o) => (o.level === 'unsafe' ? 2 : o.season.open ? 1 : 0);
   return { station: !!x, list: H.GAME.map((g) => H.huntingOutlook(g.key, ctx)).sort((a, b) => rank(b) - rank(a) || b.score - a.score) };
 }
@@ -42,6 +45,8 @@ export function hunt() {
       <div class="panel-head"><h2>Hunting outlook</h2>${station ? pill(`${Math.round(x.data.tempf ?? 0)}°F · wind ${Math.round(x.data.windspeedmph ?? 0)} mph`) : ''}</div>
       ${station ? '<p class="note">Scored from the ranch weather station right now: time of day, wind, temperature, cold fronts, pressure trend, rain and moon. Tap a card for the reasons.</p>'
         : '<p class="note warn">Connect the Ambient weather station (see <a href="#/weather">Weather station</a>) to score conditions. Seasons and legal hours are below.</p>'}
+      ${(() => { const pl = ranchPlace(); const sun = sunTimes(pl.lat, pl.lon, Date.now()); return `<p class="small muted">📍 Sun times for ${pl.lat.toFixed(4)}, ${pl.lon.toFixed(4)} (${esc(pl.source)}): sunrise ${clock(sun.rise)}, sunset ${clock(sun.set)}. Now ${clock(Date.now())}.</p>`; })()}
+      ${coordsWarning() ? `<p class="note warn">📍 ${esc(coordsWarning())}</p>` : ''}
       ${expired ? `<p class="note warn">Some season dates in the app have run out (they cover ${H.SEASON_YEAR}). Check the <a href="${H.TPWD_COUNTY_URL}" target="_blank" rel="noopener">TPWD Mason County page</a> for the new dates.</p>` : ''}
       <div class="hunt-cards">${list.map((o) => `
         <details class="card hunt-card ${o.level}" data-hunt="${o.key}" ${open.has(o.key) ? 'open' : ''}>

@@ -382,3 +382,33 @@ test('classifier: hog rules — javelina, unsure guesses, evidence first, recent
   sent.length = 0;
   assert.equal((await classifyPending(env)).labeled, 0); // the re-check runs once
 });
+
+test('ranch coordinates: missing minus sign and swapped numbers are fixed; rain re-backfills when the place changes', { timeout: 30000 }, async (t) => {
+  assert.deepEqual(L.fixRanchCoords('30.7488', '-99.2303'), { lat: 30.7488, lon: -99.2303, fixed: [] });
+  assert.deepEqual(L.fixRanchCoords('30.7488', '99.2303'), { lat: 30.7488, lon: -99.2303, fixed: ['sign'] });
+  assert.deepEqual(L.fixRanchCoords('-99.2303', '30.7488'), { lat: 30.7488, lon: -99.2303, fixed: ['swapped'] });
+  assert.deepEqual(L.fixRanchCoords('99.2303', '30.7488'), { lat: 30.7488, lon: -99.2303, fixed: ['swapped', 'sign'] });
+  assert.equal(L.fixRanchCoords('', ''), null);
+
+  const urls = [];
+  const realFetch = globalThis.fetch;
+  const base = fakeNet([]);
+  globalThis.fetch = (u, o) => { urls.push(String(u instanceof Request ? u.url : u)); return base(u, o); };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { ...env0(), RANCH_LON: '99.2' }; // typed without the minus sign
+  await call(env, '/run', { method: 'POST' });
+  const archive = urls.filter((u) => u.includes('archive-api'));
+  assert.equal(archive.length, 1);
+  assert.match(archive[0], /longitude=-99\.2/);
+  const st = await (await call(env, '/status')).json();
+  assert.equal(st.location.lon, -99.2);
+  assert.deepEqual(st.location.fixed, ['sign']);
+  assert.equal(st.location.entered.lon, '99.2');
+  // Corrected in GitHub to a different spot: the estimate history is fetched again for it.
+  urls.length = 0;
+  await call({ ...env, RANCH_LON: '-99.25' }, '/run', { method: 'POST' });
+  assert.equal(urls.filter((u) => u.includes('archive-api')).length, 1);
+  urls.length = 0;
+  await call({ ...env, RANCH_LON: '-99.25' }, '/run', { method: 'POST' });
+  assert.equal(urls.filter((u) => u.includes('archive-api')).length, 0);
+});

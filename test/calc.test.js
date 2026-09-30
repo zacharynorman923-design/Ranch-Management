@@ -436,3 +436,17 @@ test('fishing outlook: pressure, wind, water temp, light, lightning', () => {
   assert.notEqual(oldStrike.level, 'unsafe');
   assert.equal(C.fishingOutlook({ data: {}, lat, lon, now: midday }).factors[0].pts, 0); // unknown trend is neutral
 });
+
+test('ranch coordinates: minus sign and swaps fixed against the phone time zone', () => {
+  const CDT = 300, CST = 360;
+  assert.deepEqual(C.fixCoords(30.7488, -99.2303, CDT), { lat: 30.7488, lon: -99.2303, fixed: [] });
+  assert.deepEqual(C.fixCoords(30.7488, 99.2303, CDT), { lat: 30.7488, lon: -99.2303, fixed: ['sign'] });
+  assert.deepEqual(C.fixCoords('-99.2303', '30.7488', CST), { lat: 30.7488, lon: -99.2303, fixed: ['swapped'] });
+  assert.deepEqual(C.fixCoords(99.2303, 30.7488, CST), { lat: 30.7488, lon: -99.2303, fixed: ['swapped', 'sign'] });
+  assert.equal(C.fixCoords(null, null, CDT), null);
+  assert.deepEqual(C.fixCoords(51.5, -0.1, 0).fixed, []); // near Greenwich: leave it alone
+  // The flipped longitude really does invert the day: sun up at midnight, down at noon.
+  const noonCDT = Date.UTC(2026, 8, 30, 18, 30);
+  assert.ok(C.sunElevation(30.7488, -99.2303, noonCDT) > 45);
+  assert.ok(C.sunElevation(30.7488, 99.2303, noonCDT) < -30);
+});

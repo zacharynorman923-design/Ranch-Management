@@ -72,13 +72,16 @@ async function doSync() {
   try {
     const st = await call('/status'); // fail fast (once) on a wrong address or token
     await db.saveSettings({ relayInfo: { sources: st.sources || {}, location: st.location || null } });
-    const since = s.relayRainSynced ? C.addDays(s.relayRainSynced, -14) : '1900-01-01';
+    // A new (or corrected) ranch location means new estimates for every day: pull them all again.
+    const where = st.location ? `${st.location.lat},${st.location.lon}` : '';
+    const moved = where && s.relayRainLoc && s.relayRainLoc !== where;
+    const since = s.relayRainSynced && !moved ? C.addDays(s.relayRainSynced, -14) : '1900-01-01';
     const rows = await call(`/rain?since=${since}`);
     const plan = planRainImport(rows, db.all('rain'));
     if (plan.put.length) await db.putMany('rain', plan.put);
     if (plan.del.length) await db.delMany('rain', plan.del);
     out.rain = plan.put.length;
-    await db.saveSettings({ relayRainSynced: C.today() });
+    await db.saveSettings({ relayRainSynced: C.today(), relayRainLoc: where });
   } catch (err) {
     if (err.auth || err instanceof TypeError) {
       out.errors.push(err.auth ? err.message : `Can't reach the relay (${err.message}). Check the address`);

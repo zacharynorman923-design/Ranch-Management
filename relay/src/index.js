@@ -15,7 +15,7 @@
      POST /run                    run every poll now (for setup/testing)
      POST /brush-scan             {image (base64 JPEG), view, note} → brush density estimate
    ========================================================================= */
-import { safeEqual } from './lib.js';
+import { safeEqual, fixRanchCoords } from './lib.js';
 import { kvGet, kvSet } from './store.js';
 import { pollRain } from './rain.js';
 import { pollTactacam, prunePhotos } from './tactacam.js';
@@ -79,7 +79,11 @@ export default {
           brushScan: env.ANTHROPIC_API_KEY ? (env.BRUSH_SCAN_MODEL || 'claude-opus-5') : false,
         },
         // Where the weather-model estimate is computed. 30.7488, -99.2303 is Mason town (the default).
-        location: { lat: Number(env.RANCH_LAT), lon: Number(env.RANCH_LON), tz: env.RANCH_TZ || 'America/Chicago' },
+        location: (() => {
+          const tz = env.RANCH_TZ || 'America/Chicago';
+          const f = fixRanchCoords(env.RANCH_LAT, env.RANCH_LON, tz);
+          return { lat: f?.lat ?? null, lon: f?.lon ?? null, tz, entered: { lat: env.RANCH_LAT ?? null, lon: env.RANCH_LON ?? null }, fixed: f?.fixed || [] };
+        })(),
       });
     }
     if (p === '/rain') {

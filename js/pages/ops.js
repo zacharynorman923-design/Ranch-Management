@@ -1,6 +1,7 @@
 /* Ops layer: task calendar with seasonal templates, contacts, GPS photo log,
    settings and backup. */
 import * as db from '../db.js';
+import { coordsWarning } from '../place.js';
 import * as C from '../calc.js';
 import { S, DEFAULTS } from '../model.js';
 import { APP_VERSION } from '../version.js';
@@ -200,6 +201,7 @@ export function settings() {
         <button class="btn primary" data-relay-sync ${s.relayUrl && s.relayToken ? '' : 'disabled'}>Sync now</button>
         <button class="btn" data-relay-status ${s.relayUrl && s.relayToken ? '' : 'disabled'}>Check relay</button>
       </div>
+      ${coordsWarning() ? `<p class="note warn">📍 ${esc(coordsWarning())}</p>` : ''}
       <p class="note small">Weather station: ${s.relayInfo?.sources?.ambient ? (s.weatherNow ? `connected (${esc(s.weatherNow.name || 'Ambient')}). See <a href="#/weather">Weather station</a>.` : 'keys set; readings arrive on the next sync.') : 'not connected. Add <code>AMBIENT_API_KEY</code> and <code>AMBIENT_APPLICATION_KEY</code> secrets and redeploy the relay.'}</p>
       <p class="note small">Photo labeling: ${s.relayInfo?.sources?.classifier ? `on (${esc(s.relayInfo.sources.classifier)})` : 'off. Add an <code>ANTHROPIC_API_KEY</code> secret and redeploy the relay (see relay/README).'}</p>
       ${s.relayLastResult ? `<p class="note small">Last sync: ${s.relayLastResult.rain} rain days, ${s.relayLastResult.cameras} cameras, ${s.relayLastResult.photos} new photos${s.relayLastResult.labels ? `, ${s.relayLastResult.labels} labels` : ''}.${(s.relayLastResult.errors || []).map((e) => `<br><span class="bad-t">${esc(e)}</span>`).join('')}</p>` : ''}
