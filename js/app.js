@@ -12,6 +12,7 @@ import * as K from './pages/compliance.js';
 import * as M from './pages/money.js';
 import * as O from './pages/ops.js';
 import * as WX from './pages/weather.js';
+import * as HU from './pages/hunt.js';
 import { APP_VERSION } from './version.js';
 import { photoURL, markPhotosOk } from './photos.js';
 import { openViewer } from './viewer.js';
@@ -22,6 +23,7 @@ const ROUTES = {
   stocking: { title: 'Stocking', group: 'Grazing', render: G.stockingPage },
   pastures: { title: 'Pastures', group: 'Grazing', render: G.pastures, bind: G.bindPastures },
   herd: { title: 'Herd', group: 'Grazing', render: G.herd, bind: G.bindHerd },
+  hunt: { title: 'Hunting outlook', group: 'Wildlife', render: HU.hunt, bind: HU.bindHunt },
   harvest: { title: 'Deer harvest', group: 'Wildlife', render: W.harvest, bind: W.bindHarvest },
   census: { title: 'Spotlight census', group: 'Wildlife', render: W.census },
   devices: { title: 'Cams & feeders', group: 'Wildlife', render: W.devices, bind: W.bindDevices },
@@ -122,6 +124,7 @@ function dashboard() {
         <a href="#/stocking">${stat('Stocking', `${n1(st.herd.au)} / ${st.cap.head}`, st.status.msg, tone)}</a>
         ${WX.weatherTile()}
         ${WX.fishingTile()}
+        ${HU.huntingTile()}
         <a href="#/rain">${stat('Rain, 12 mo', st.rain.ratio == null ? '—' : pct(st.rain.ratio), rainSub(lastRain), st.rain.ratio != null && st.rain.ratio < 0.75 ? 'warn' : '')}</a>
         <a href="#/herd">${stat('Lb weaned / exposed', kpi.lbsPerExposed == null ? '—' : n0(kpi.lbsPerExposed), `${kpi.crop} calf crop`)}</a>
         <a href="#/census">${stat('Acres per deer', census ? n1(census.acresPerDeer) : '—', census ? `~${n0(census.population)} deer (${census.year})` : 'no census')}</a>

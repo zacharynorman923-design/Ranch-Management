@@ -364,3 +364,14 @@ dialog.viewer::backdrop { background: #000; }
 .cam-alert-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .chip.ok-chip { background: var(--good); border-color: var(--good); color: #fff; font-weight: 600; }
 .v-ok { font: inherit; font-size: 16px; font-weight: 700; padding: 11px 14px; border-radius: 12px; border: 0; background: #2F9E55; color: #fff; }
+
+/* Hunting outlook */
+.hunt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.hunt-card summary { list-style: none; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.hunt-card summary::-webkit-details-marker { display: none; }
+.hunt-top { display: flex; align-items: center; gap: 8px; }
+.hunt-icon { font-size: 22px; }
+.hunt-score { margin-left: auto; font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+.hunt-card.closed { opacity: .72; }
+.hunt-card.excellent, .hunt-card.good { border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+.hunt-card.unsafe { border-color: var(--bad); }
