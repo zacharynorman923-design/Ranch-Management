@@ -94,39 +94,60 @@ function buckDetail(b) {
     </section>`;
 }
 
-function censusPanel() {
+/** The census as currently set up: window, gap, photos and the numbers. */
+function censusNow() {
   const s = db.settings();
   const cfg = s.camCensus || {};
   const end = cfg.end || C.today();
   const start = cfg.start || C.addDays(end, -13);
+  const gap = Number(cfg.gap ?? 5);
   const days = C.daysBetween(start, end) + 1;
   const photos = db.all('photos').filter((p) => p.date >= start && p.date <= end && (p.source === 'reveal' || db.get('devices', p.device)?.type === 'camera'));
-  const unique = new Set(photos.map((p) => p.buck).filter(Boolean)).size;
+  const named = new Map();
+  for (const p of photos) if (p.buck) named.set(p.buck, [...(named.get(p.buck) || []), p.id]);
   const cams = new Set(photos.map((p) => p.device).filter(Boolean)).size;
   const acres = Number(s.acres) || 0;
-  const c = D.cameraCensus({ photos, uniqueBucks: unique, days, acres });
+  const c = D.cameraCensus({ photos, uniqueBucks: named.size, days, acres, gapMin: gap });
+  return { start, end, gap, days, photos, named, cams, acres, c };
+}
+const sortIds = (ids) => ids.map((id) => db.get('photos', id)).filter(Boolean).sort((a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? -1 : 1)).map((p) => p.id);
+
+function censusPanel() {
+  const { start, end, gap, days, photos, named, cams, acres, c } = censusNow();
   const warn = [];
   if (days < 10) warn.push(`Run it at least 10 days (this window is ${days}). 14 is best.`);
   if (acres && cams && acres / cams > 160) warn.push(`${cams} camera${cams === 1 ? '' : 's'} on ${acres} ac: aim for about 1 per 100 acres.`);
-  if (c.unidentified) warn.push(`${c.unidentified} buck photo${c.unidentified === 1 ? ' is' : 's are'} not identified yet. Identify them above, or the buck count is low.`);
+  if (c.unidentified) warn.push(`${c.unidentified} buck visit${c.unidentified === 1 ? ' has' : 's have'} no named buck yet. Identify them (tap “Unidentified” below), or the buck count is low.`);
   if (!c.occ.buck) warn.push('No buck photos in this window.');
+  const visits = (k) => new Set(c.photosFor[k].map((id) => c.visitOf[id])).size;
+  const tile = (k, html) => `<button type="button" class="stat-btn" data-cview="${k}" ${c.photosFor[k]?.length ? '' : 'disabled'}>${html}</button>`;
   return `<section class="panel" id="census">
     <div class="panel-head"><h2>Camera census</h2>${pill('Jacobson method')}</div>
     <p class="note">The standard trail-camera deer survey: 10–14 days over feeders or bait, about one camera per 100 acres, usually late summer or early fall before the season. Every buck is identified individually. Their photo rate then scales the doe and fawn photos into a herd estimate.</p>
     <div class="form-grid">
       <label class="field">First day<input type="date" data-set="camCensus.start" value="${esc(start)}"></label>
       <label class="field">Last day<input type="date" data-set="camCensus.end" value="${esc(end)}"></label>
+      <label class="field">Count a burst once<select data-set="camCensus.gap">${[[0, 'No: every photo counts'], [5, 'Within 5 minutes (recommended)'], [10, 'Within 10 minutes'], [30, 'Within 30 minutes']].map(([v, l]) => `<option value="${v}" ${gap === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <small class="help">Photos from the same camera this close together are one visit, counted at the most deer seen in any one of its photos. It stops a doe standing at the feeder for a burst of photos from counting 5 times.</small></label>
     </div>
     <div class="stats">
-      ${stat('Unique bucks', n0(unique), `${c.occ.buck} buck occurrences`)}
-      ${stat('Does', c.est ? `~${n0(c.est.does)}` : '—', `${c.occ.doe} doe occurrences`)}
-      ${stat('Fawns', c.est ? `~${n0(c.est.fawns)}` : '—', `${c.occ.fawn} fawn occurrences`)}
+      ${tile('buck', stat('Unique bucks', n0(named.size), `${c.occ.buck} buck occurrence${c.occ.buck === 1 ? '' : 's'} in ${visits('buck')} visit${visits('buck') === 1 ? '' : 's'}`))}
+      ${tile('doe', stat('Does', c.est ? `~${n0(c.est.does)}` : '—', `${c.occ.doe} doe occurrence${c.occ.doe === 1 ? '' : 's'} in ${visits('doe')} visit${visits('doe') === 1 ? '' : 's'}`))}
+      ${tile('fawn', stat('Fawns', c.est ? `~${n0(c.est.fawns)}` : '—', `${c.occ.fawn} fawn occurrence${c.occ.fawn === 1 ? '' : 's'} in ${visits('fawn')} visit${visits('fawn') === 1 ? '' : 's'}`))}
       ${stat('Total deer', c.est ? `~${n0(c.est.total)}` : '—', c.acresPerDeer ? `${n1(c.acresPerDeer)} ac/deer` : '', 'accent')}
       ${stat('Does per buck', c.doesPerBuck == null ? '—' : n1(c.doesPerBuck))}
       ${stat('Fawns per doe', c.fawnsPerDoe == null ? '—' : n2(c.fawnsPerDoe), 'fawn crop')}
     </div>
+    <h3>Check the photos behind the numbers</h3>
+    <div class="chips census-chips">
+      ${named.size ? [...named.entries()].map(([id, ids]) => `<button class="chip" data-cview-ids="${esc(sortIds(ids).join(','))}">🦌 ${esc(db.get('bucks', id)?.name || 'Buck')} · ${ids.length}</button>`).join('') : ''}
+      ${c.photosFor.unidentified.length ? `<button class="chip warn-chip" data-cview="unidentified">❓ Unidentified bucks · ${c.photosFor.unidentified.length}</button>` : ''}
+      ${c.photosFor.deer.length ? `<button class="chip" data-cview="deer">Deer, sex unknown · ${c.photosFor.deer.length}</button>` : ''}
+      <button class="chip" data-cview-ids="${esc(sortIds(photos.map((p) => p.id)).join(','))}">All ${photos.length} photos</button>
+    </div>
+    <p class="small muted">Tap a number or a chip to page through the exact photos it counts. Each photo shows how it was counted and which visit it belongs to, and you can fix a count right there.</p>
     ${warn.map((w) => `<p class="note warn">${esc(w)}</p>`).join('')}
-    <p class="small muted">${photos.length} camera photos from ${cams} camera${cams === 1 ? '' : 's'}, ${days} days. Estimates include the ${c.correction}× correction for deer never photographed. Counts come from the AI labels unless you tagged the photo yourself. Does-per-buck and fawns-per-doe use raw photo counts.</p>
+    <p class="small muted">${photos.length} camera photos in ${c.visits} visit${c.visits === 1 ? '' : 's'} from ${cams} camera${cams === 1 ? '' : 's'}, ${days} days. Estimates include the ${c.correction}× correction for deer never photographed. Counts come from your own counts or tags first, then the AI labels. Does-per-buck and fawns-per-doe use raw visit counts.</p>
     <div class="head-actions"><button class="btn primary" data-save-census ${c.est ? '' : 'disabled'}>Save this census</button></div>
     <p class="note">Saved camera censuses count as the “census” practice in the <a href="#/valuation">valuation binder</a>, alongside spotlight runs.</p>
   </section>
@@ -162,19 +183,18 @@ export function bindBucks(el, rerender, params) {
     if (b) { await db.put('bucks', { ...b, status: x.dataset.status }); toast(`${b.name}: ${x.dataset.status}`); }
   }));
   el.querySelector('[data-save-census]')?.addEventListener('click', async () => {
-    const s = db.settings();
-    const end = s.camCensus?.end || C.today();
-    const start = s.camCensus?.start || C.addDays(end, -13);
-    const photos = db.all('photos').filter((p) => p.date >= start && p.date <= end && (p.source === 'reveal' || db.get('devices', p.device)?.type === 'camera'));
-    const unique = new Set(photos.map((p) => p.buck).filter(Boolean)).size;
-    const c = D.cameraCensus({ photos, uniqueBucks: unique, days: C.daysBetween(start, end) + 1, acres: Number(s.acres) || 0 });
+    const { start, end, gap, named, photos, c } = censusNow();
     if (!c.est) return;
     await db.put('camsurveys', {
-      date: start, end, cameras: new Set(photos.map((p) => p.device).filter(Boolean)).size, uniqueBucks: unique,
+      date: start, end, cameras: new Set(photos.map((p) => p.device).filter(Boolean)).size, uniqueBucks: named.size,
       buckPhotos: c.occ.buck, doePhotos: c.occ.doe, fawnPhotos: c.occ.fawn,
       bucks: Math.round(c.est.bucks * 10) / 10, does: Math.round(c.est.does * 10) / 10, fawns: Math.round(c.est.fawns * 10) / 10, total: Math.round(c.est.total * 10) / 10,
-      notes: `Jacobson camera survey, ${c.correction}× correction.${c.unidentified ? ` ${c.unidentified} buck photos were unidentified.` : ''}`,
+      notes: `Jacobson camera survey, ${c.correction}× correction, ${gap ? `bursts within ${gap} min counted once (${c.visits} visits from ${photos.length} photos)` : 'every photo counted'}.${c.unidentified ? ` ${c.unidentified} buck visits were unidentified.` : ''}`,
     });
     toast('Camera census saved');
   });
+  // Open the photos behind a census number, with how each one was counted.
+  const censusView = (ids) => { if (ids.length) openViewer(ids, 0, { census: { gapMin: censusNow().gap, ids: censusNow().photos.map((p) => p.id) } }); };
+  el.querySelectorAll('[data-cview]').forEach((x) => x.addEventListener('click', () => censusView(sortIds(censusNow().c.photosFor[x.dataset.cview] || []))));
+  el.querySelectorAll('[data-cview-ids]').forEach((x) => x.addEventListener('click', () => censusView(x.dataset.cviewIds.split(',').filter(Boolean))));
 }

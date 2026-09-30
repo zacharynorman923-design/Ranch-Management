@@ -59,3 +59,29 @@ test('buck pattern: cameras, peak hour, daylight share and recent daylight', () 
   assert.equal(pat.recent, 2);
   assert.equal(pat.recentDaylight, 2);
 });
+
+test('census visits: bursts on one camera count once, at the most seen in any photo', () => {
+  const ph = (id, device, time, counts, extra = {}) => ({ id, date: '2026-09-10', time, device, aiCounts: counts, ...extra });
+  const photos = [
+    ph('a1', 'feeder', '19:02', { doe: 2 }), ph('a2', 'feeder', '19:03', { doe: 3, fawn: 1 }), ph('a3', 'feeder', '19:06', { doe: 1 }), // one visit
+    ph('b1', 'feeder', '19:30', { doe: 1 }),                               // new visit (gap 24 min)
+    ph('c1', 'creek', '19:03', { buck: 1 }, { buck: 'big8' }), ph('c2', 'creek', '19:04', { buck: 1 }), // one visit, identified
+    ph('d1', 'creek', '21:00', { buck: 1 }),                                // unidentified buck visit
+  ];
+  const v = D.censusVisits(photos, 5);
+  assert.equal(v.length, 4);
+  const feeder = v.find((x) => x.ids.includes('a1'));
+  assert.deepEqual(feeder.ids, ['a1', 'a2', 'a3']);
+  assert.deepEqual(feeder.counts, { buck: 0, doe: 3, fawn: 1, deer: 0 });
+  const c = D.cameraCensus({ photos, uniqueBucks: 1, days: 14, gapMin: 5 });
+  assert.deepEqual(c.occ, { buck: 2, doe: 4, fawn: 1, deer: 0 });
+  assert.equal(c.visits, 4);
+  assert.equal(c.unidentified, 1);
+  assert.deepEqual(c.photosFor.unidentified, ['d1']);
+  assert.deepEqual(c.photosFor.fawn, ['a1', 'a2', 'a3']);
+  assert.deepEqual(c.visitOf.a2.ids, feeder.ids);
+  // Every photo on its own: no grouping.
+  assert.deepEqual(D.cameraCensus({ photos, uniqueBucks: 1, days: 14, gapMin: 0 }).occ, { buck: 3, doe: 7, fawn: 1, deer: 0 });
+  // Your hand count wins.
+  assert.deepEqual(D.photoDeer({ counts: { doe: 1 }, tags: 'doe, fawn', aiCounts: { doe: 4 } }), { buck: 0, doe: 1, fawn: 0, deer: 0 });
+});

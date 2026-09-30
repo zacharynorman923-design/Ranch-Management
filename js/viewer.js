@@ -5,12 +5,13 @@
 import * as db from './db.js';
 import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
 import { relayPhotoBlob, relayConfigured, matchBuckPhoto } from './relay.js';
+import { cameraCensus, photoDeer } from './deer.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
 const MAX_ZOOM = 6;
 
-export function openViewer(ids, index = 0, { onEdit } = {}) {
+export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   ids = ids.filter(Boolean);
   if (!ids.length) return;
   let i = Math.min(Math.max(0, index), ids.length - 1);
@@ -26,6 +27,7 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
     <button type="button" class="v-nav v-prev" data-prev aria-label="Previous photo">‹</button>
     <button type="button" class="v-nav v-next" data-next aria-label="Next photo">›</button>
     <div class="v-bottom">
+      <div class="v-census" data-census hidden></div>
       <div class="v-ai" data-ai></div>
       <button type="button" class="v-ok" data-okay hidden>✓ OK, that was us</button>
       <div class="v-tags" data-tags></div>
@@ -91,6 +93,28 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
         ${bucks.length && relayConfigured() ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>`}`;
   };
 
+  // Opened from the camera census: how this photo is counted, its visit, and fixable counts.
+  const renderCensus = (p) => {
+    const box = $('[data-census]');
+    if (!census) { box.hidden = true; return; }
+    box.hidden = false;
+    const recs = census.ids.map((id) => db.get('photos', id)).filter(Boolean);
+    const c = cameraCensus({ photos: recs, uniqueBucks: 0, days: 14, gapMin: census.gapMin });
+    const v = c.visitOf[p.id];
+    const mine = photoDeer(p);
+    const t = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const kinds = [['buck', 'Bucks'], ['doe', 'Does'], ['fawn', 'Fawns']];
+    const one = { buck: 'buck', doe: 'doe', fawn: 'fawn' };
+    const said = (o) => kinds.filter(([k]) => o[k]).map(([k, l]) => `${o[k]} ${o[k] === 1 ? one[k] : l.toLowerCase()}`).join(', ') || 'no deer';
+    const cam = db.get('devices', p.device)?.name || 'this camera';
+    box.innerHTML = `<div>📊 <b>Census</b> · this photo: ${kinds.map(([k, l]) => `<span class="v-cnt">${l} <button type="button" data-cnt="${k}:-1" aria-label="fewer ${l}">−</button><b>${mine[k] || 0}</b><button type="button" data-cnt="${k}:1" aria-label="more ${l}">+</button></span>`).join('')}
+        <small>${p.counts ? '✏️ your count · <button type="button" class="v-link" data-cnt-reset>use the AI\'s</button>' : 'from the AI label'}</small></div>
+      <div><small>${v && v.ids.length > 1
+        ? `Part of one visit: ${v.ids.length} photos on ${esc(cam)}${v.start != null ? `, ${t(v.start)}–${t(v.last)}` : ''}. Counted <b>once</b> as ${esc(said(v.counts))} (the most seen in any one photo).`
+        : census.gapMin ? `A visit on its own. Counted as ${esc(said(v?.counts || mine))}.` : `Every photo counts separately. Counted as ${esc(said(mine))}.`}
+        ${p.buck ? ` Named buck: <b>${esc(db.get('bucks', p.buck)?.name || '?')}</b>.` : mine.buck ? ' Buck not identified yet.' : ''}</small></div>`;
+  };
+
   const renderInfo = () => {
     const p = db.get('photos', ids[i]);
     if (!p) return;
@@ -108,6 +132,7 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
     }).join('');
     $('[data-okay]').hidden = !needsReview(p);
     renderBuck(p, eff);
+    renderCensus(p);
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;
     $('[data-next]').hidden = i === ids.length - 1;
@@ -216,6 +241,19 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
       // Next photo in a burst that still needs a look.
       const k = ids.findIndex((id, j) => j > i && needsReview(db.get('photos', id)));
       if (k > 0) setTimeout(() => show(k), 350);
+      return;
+    }
+    const cnt = e.target.closest('[data-cnt],[data-cnt-reset]');
+    if (cnt) {
+      const p = db.get('photos', ids[i]);
+      if (!p) return;
+      if (cnt.hasAttribute('data-cnt-reset')) { const { counts, ...rest } = p; await db.put('photos', rest); }
+      else {
+        const [k, d] = cnt.dataset.cnt.split(':');
+        const cur = photoDeer(p);
+        await db.put('photos', { ...p, counts: { buck: cur.buck || 0, doe: cur.doe || 0, fawn: cur.fawn || 0, [k]: Math.max(0, (cur[k] || 0) + Number(d)) } });
+      }
+      renderInfo();
       return;
     }
     const bk = e.target.closest('[data-bk],[data-bk-new],[data-bk-yes],[data-bk-no],[data-bk-clear],[data-bk-star],[data-bk-ask]');
