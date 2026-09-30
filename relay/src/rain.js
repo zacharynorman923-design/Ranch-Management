@@ -1,7 +1,7 @@
 /* Rain estimate: Open-Meteo's free weather-model rainfall for the ranch's
    coordinates (always, as a fallback and to backfill history). The on-site
    Ambient gauge is read in weather.js. */
-import { openMeteoDaily, localDate, addDaysISO } from './lib.js';
+import { openMeteoDaily, localDate, addDaysISO, fixRanchCoords } from './lib.js';
 import { kvGet, kvSet } from './store.js';
 
 
@@ -21,15 +21,20 @@ export async function pollRain(env) {
   const today = localDate(Date.now(), tz);
   const out = { estimate: 0 };
 
-  const lat = Number(env.RANCH_LAT), lon = Number(env.RANCH_LON);
-  if (Number.isFinite(lat) && Number.isFinite(lon) && (lat || lon)) {
+  const place = fixRanchCoords(env.RANCH_LAT, env.RANCH_LON, tz);
+  if (place) {
+    const { lat, lon } = place;
     const q = `latitude=${lat}&longitude=${lon}&daily=precipitation_sum&precipitation_unit=inch&timezone=${encodeURIComponent(tz)}`;
-    // One-time backfill so the stocking calculator has 12+ months on day one.
-    if (!(await kvGet(env, 'rain_backfilled'))) {
+    // Backfill 12+ months so the stocking calculator has history on day one,
+    // and again whenever the ranch location changes (or was corrected).
+    const where = `${lat},${lon}`;
+    const done = await kvGet(env, 'rain_backfilled');
+    if (!done || (await kvGet(env, 'rain_backfill_at')) !== where) {
       const r = await fetch(`https://archive-api.open-meteo.com/v1/archive?${q}&start_date=${addDaysISO(today, -400)}&end_date=${addDaysISO(today, -3)}`);
       if (!r.ok) throw new Error(`Open-Meteo archive HTTP ${r.status}`);
       out.estimate += await upsert(env, openMeteoDaily(await r.json()), 'est');
       await kvSet(env, 'rain_backfilled', today);
+      await kvSet(env, 'rain_backfill_at', where);
     }
     const r = await fetch(`https://api.open-meteo.com/v1/forecast?${q}&past_days=10&forecast_days=1`);
     if (!r.ok) throw new Error(`Open-Meteo HTTP ${r.status}`);

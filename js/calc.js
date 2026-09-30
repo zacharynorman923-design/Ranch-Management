@@ -1030,3 +1030,21 @@ export function fishingOutlook({ data = {}, pressTrend = null, recentAvgTemps = 
   return { score, level, headline, factors: f, water };
 }
 const n1f = (x) => (Math.round(Number(x) * 10) / 10).toString();
+
+/**
+ * Check ranch coordinates against the phone's time zone and fix the usual
+ * slips: numbers swapped, or a west longitude typed without its minus sign
+ * (Apple Maps shows "99.23° W"). tzOffsetMin is Date#getTimezoneOffset()
+ * (300 for Central daylight time), so local solar noon sits near
+ * longitude −tzOffsetMin / 4.
+ */
+export function fixCoords(latIn, lonIn, tzOffsetMin = new Date().getTimezoneOffset()) {
+  let lat = Number(latIn), lon = Number(lonIn);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || (!lat && !lon)) return null;
+  const fixed = [];
+  if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { [lat, lon] = [lon, lat]; fixed.push('swapped'); }
+  const expect = -tzOffsetMin / 4;
+  const off = (x) => Math.abs((((x - expect) % 360) + 540) % 360 - 180);
+  if (off(-lon) + 30 < off(lon)) { lon = -lon; fixed.push('sign'); }
+  return { lat, lon, fixed };
+}

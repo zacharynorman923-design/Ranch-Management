@@ -52,6 +52,9 @@ export async function pollAmbient(env, { history = true } = {}) {
   await kvSet(env, 'wx_press', press.hist);
   await kvSet(env, 'wx_current', {
     mac: dev.macAddress, name: dev.info?.name || '', place: dev.info?.location || '',
+    // Where the station says it is (set in the Ambient dashboard), if it says.
+    coords: Number.isFinite(Number(dev.info?.coords?.coords?.lat)) && Number.isFinite(Number(dev.info?.coords?.coords?.lon))
+      ? { lat: Number(dev.info.coords.coords.lat), lon: Number(dev.info.coords.coords.lon) } : null,
     fetched: new Date().toISOString(), data: dev.lastData || {}, pressTrend3h: press.trend,
   });
   const out = { station: dev.info?.name || dev.macAddress, current: !!dev.lastData };

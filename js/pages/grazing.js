@@ -1,5 +1,6 @@
 /* Grazing & stocking: rain log, carrying capacity, pasture rotation, herd. */
 import * as db from '../db.js';
+import { coordsWarning } from '../place.js';
 import * as C from '../calc.js';
 import { S, stocking } from '../model.js';
 import { EVENT_TYPES } from '../schema.js';
@@ -13,7 +14,7 @@ const MASON_TOWN = { lat: 30.7488, lon: -99.2303 };
 /** Where the rain numbers come from, and how much to trust them. */
 function rainSourcePanel(s, t) {
   const mix = C.rainSourceMix(db.all('rain'), t);
-  const loc = s.relayInfo?.location;
+  const loc = s.relayInfo?.location && Number.isFinite(s.relayInfo.location.lat) ? s.relayInfo.location : null;
   const isTown = loc && Math.abs(loc.lat - MASON_TOWN.lat) < 0.001 && Math.abs(loc.lon - MASON_TOWN.lon) < 0.001;
   const rows = [
     ['gauge', 'Your rain gauge (automatic)', 'Measured at the gauge. The most accurate source.'],
@@ -27,6 +28,7 @@ function rainSourcePanel(s, t) {
   else if (mix.gauge.days && !mix.estimate.days) verdict = '<p class="note">All automatic rain comes from your gauge. ✓</p>';
   else if (mix.estimate.days) verdict = `<p class="note">These are <b>estimates, not measurements</b>. They come from a weather model's rainfall for a grid square a few miles across. They're good for 12-month trends like stocking decisions, but a single thunderstorm can be off by half or more because Hill Country storms are patchy. ${isTown ? 'The relay is estimating for Mason town. Set <code>RANCH_LAT</code> / <code>RANCH_LON</code> to your pasture (see relay/README) so it estimates for your place. ' : ''}A gauge on the place replaces these day by day.</p>`;
   else if (!rows.length) verdict = '<p class="note">No rain recorded in the last 12 months.</p>';
+  if (coordsWarning() && mix.estimate.days) verdict += `<p class="note warn">📍 ${esc(coordsWarning())} Until the relay is redeployed, the estimates are for the wrong place.</p>`;
   else verdict = '<p class="note">All rain here was logged by hand.</p>';
   return `<section class="panel">
     <div class="panel-head"><h2>Where these numbers come from</h2>${mix.sample.days ? pill('sample data mixed in', 'bad') : mix.estimate.days > mix.gauge.days + mix.manual.days ? pill('mostly estimated', 'warn') : rows.length ? pill('measured', 'good') : ''}</div>

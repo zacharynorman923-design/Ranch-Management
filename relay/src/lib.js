@@ -70,6 +70,20 @@ export function pressureTrend(hist, t, p) {
   return { hist: h, trend };
 }
 
+/**
+ * Ranch coordinates as typed into RANCH_LAT / RANCH_LON, with the two common
+ * slips fixed: numbers swapped, and a west longitude missing its minus sign
+ * (Apple Maps shows "99.23° W"). A time zone in the Americas means west.
+ */
+export function fixRanchCoords(latIn, lonIn, tz = 'America/Chicago') {
+  let lat = Number(latIn), lon = Number(lonIn);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || (!lat && !lon)) return null;
+  const fixed = [];
+  if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { [lat, lon] = [lon, lat]; fixed.push('swapped'); }
+  if (/^America\//.test(tz) && lon > 0) { lon = -lon; fixed.push('sign'); }
+  return { lat, lon, fixed };
+}
+
 /** Open-Meteo daily JSON → [{ date, inches }], dropping days it has no value for. */
 export function openMeteoDaily(json) {
   const t = json?.daily?.time || [];

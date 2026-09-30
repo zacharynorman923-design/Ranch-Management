@@ -78,7 +78,9 @@ in this public repo or its logs.
 variable** and add `RANCH_LAT` and `RANCH_LON` for the middle of your place.
 In Apple or Google Maps, drop a pin there; the coordinates look like
 `30.7488, -99.2303`. The first number is LAT, the second is LON, with its
-minus sign. This puts the rain estimate on your pastures instead of Mason
+minus sign. **Apple Maps shows them as `30.7488° N, 99.2303° W`: "W" means
+the longitude is negative, so type `-99.2303`.** (The relay and app now fix a
+missing minus sign on their own and warn you, but it's best to enter it right.) This puts the rain estimate on your pastures instead of Mason
 town.
 
 ### E. Deploy
