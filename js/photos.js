@@ -23,6 +23,16 @@ export async function photoURL(id) {
 export const photoTags = (p) => [...new Set(String((p?.tags || '').trim() ? p.tags : p?.aiTags || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
 export const isBlankPhoto = (p) => { const t = photoTags(p); return t.length === 1 && t[0] === 'empty'; };
 
+/** A smaller JPEG copy of a stored photo (data URL), for sending as a reference. */
+export async function shrinkImage(dataURL, maxEdge = 640) {
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('not an image')); i.src = dataURL; });
+  const k = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+
 /** A person or vehicle on camera that nobody has marked OK yet. */
 export const needsReview = (p) => { const t = photoTags(p); return (t.includes('person') || t.includes('vehicle')) && !t.includes('ok'); };
 /** Mark photos OK ("that was us"). Keeps the person/vehicle tag so they can still be found. */

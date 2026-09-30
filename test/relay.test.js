@@ -107,7 +107,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -411,4 +411,38 @@ test('ranch coordinates: missing minus sign and swapped numbers are fixed; rain 
   urls.length = 0;
   await call({ ...env, RANCH_LON: '-99.25' }, '/run', { method: 'POST' });
   assert.equal(urls.filter((u) => u.includes('archive-api')).length, 0);
+});
+
+test('buck-match: sends refs per named buck plus the new photo, ids in the schema, unsure without antlers, daily cap', { timeout: 30000 }, async (t) => {
+  const sent = [];
+  let reply = { antlers_visible: true, rack: 'main-frame 8, split left brow', compared: 'split brow and drop tine match', match: 'b1', confidence: 'high', reason: 'Same split left brow as Big 8' };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const req = url instanceof Request ? url : new Request(String(url), opts);
+    sent.push(JSON.parse(await req.text()));
+    return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify(reply) }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k', BUCK_MATCH_DAILY_LIMIT: '3' };
+  const img = 'data:image/jpeg;base64,' + 'B'.repeat(3000);
+  const bucks = [{ id: 'b1', name: 'Big 8', refs: [img, img] }, { id: 'b2', name: 'Drop Tine', refs: [img] }, { id: 'b3', name: 'No refs', refs: [] }];
+  const post = (b) => call(env, '/buck-match', { method: 'POST', body: JSON.stringify(b), headers: { 'Content-Type': 'application/json' } });
+
+  const r = await post({ image: img, bucks });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).result.match, 'b1');
+  const body = sent[0];
+  const imgs = body.messages[0].content.filter((c) => c.type === 'image');
+  assert.equal(imgs.length, 4); // 2 + 1 refs, then the new photo
+  assert.equal(imgs[3].source.data.length, 3000);
+  assert.deepEqual(body.output_config.format.schema.properties.match.enum, ['b1', 'b2', 'new', 'unsure']);
+  assert.match(body.system, /drop tines/);
+
+  reply = { ...reply, antlers_visible: false, match: 'b2', confidence: 'medium' };
+  const blind = await (await post({ image: img, bucks })).json();
+  assert.equal(blind.result.match, 'unsure');
+  assert.equal((await post({ image: img, bucks })).status, 200);
+  assert.equal((await post({ image: img, bucks })).status, 429);
+  assert.equal((await post({ image: img, bucks: [{ id: 'x', name: 'x', refs: [] }] })).status, 400);
 });

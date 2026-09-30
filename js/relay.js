@@ -6,7 +6,8 @@
    ========================================================================= */
 import * as db from './db.js';
 import * as C from './calc.js';
-import { addPhotoFile } from './photos.js';
+import { addPhotoFile, photoURL, photoTags, shrinkImage } from './photos.js';
+import { deerCounts } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -145,6 +146,7 @@ async function doSync() {
               loc: p.lat != null ? { lat: p.lat, lon: p.lon } : dev?.loc || null,
               temp: p.temp ?? '', moon: p.moon || '',
               aiTags: p.ai_tags || '', aiSummary: p.ai_summary || '',
+              ...(p.ai_labels ? { aiCounts: deerCounts(parseJSON(p.ai_labels)) } : {}),
             });
             out.photos++;
           }
@@ -165,13 +167,18 @@ async function doSync() {
       for (const r of rows) {
         cursor = r.updated > cursor ? r.updated : cursor;
         const ph = db.get('photos', `reveal-${r.id}`);
-        if (ph && (ph.aiTags !== (r.tags || '') || ph.aiSummary !== (r.summary || ''))) writes.push({ ...ph, aiTags: r.tags || '', aiSummary: r.summary || '' });
+        if (ph && (ph.aiTags !== (r.tags || '') || ph.aiSummary !== (r.summary || '') || (r.labels && !ph.aiCounts))) {
+          writes.push({ ...ph, aiTags: r.tags || '', aiSummary: r.summary || '', ...(r.labels ? { aiCounts: deerCounts(r.labels) } : {}) });
+        }
       }
       if (writes.length) await db.putMany('photos', writes);
       out.labels = writes.length;
       await db.saveSettings({ relayLabelCursor: cursor });
     } catch (err) { out.errors.push(`Labels: ${err.message}`); }
   }
+
+  // New buck photos: which named buck is it?
+  try { out.bucks = await matchPendingBucks(); } catch (err) { out.errors.push(`Buck matching: ${err.message}`); }
 
   // Brush photos taken without signal.
   try { out.scans = await analyzePendingScans(); } catch (err) { out.errors.push(`Brush photos: ${err.message}`); }
@@ -209,6 +216,57 @@ export async function relayStatus() {
 }
 export async function relayRunNow() {
   return call('/run', { method: 'POST' });
+}
+
+const parseJSON = (x) => { try { return typeof x === 'string' ? JSON.parse(x) : x; } catch { return null; } };
+
+/* ------------------------- which buck is this? ---------------------------- */
+const MAX_BUCKS_SENT = 8, REFS_PER_BUCK = 3, MATCH_PER_SYNC = 8;
+/** Reference photos for a buck: the ones you starred, else his newest confirmed photos. */
+export function buckRefIds(b) {
+  if (b.refs?.length) return b.refs.filter((id) => db.get('photos', id)).slice(0, REFS_PER_BUCK);
+  return db.all('photos').filter((p) => p.buck === b.id).sort((x, y) => (`${x.date} ${x.time || ''}` < `${y.date} ${y.time || ''}` ? 1 : -1)).slice(0, REFS_PER_BUCK).map((p) => p.id);
+}
+async function buckRoster() {
+  const out = [];
+  for (const b of db.all('bucks').filter((x) => (x.status || 'active') === 'active')) {
+    const refs = [];
+    for (const id of buckRefIds(b)) { const u = await photoURL(id); if (u) refs.push(await shrinkImage(u, 640)); }
+    if (refs.length) out.push({ id: b.id, name: b.name, refs });
+    if (out.length >= MAX_BUCKS_SENT) break;
+  }
+  return out;
+}
+/** Ask the relay which named buck is in a photo; saves the answer on the photo as buckAI. */
+export async function matchBuckPhoto(id, roster = null) {
+  const p = db.get('photos', id);
+  if (!p) return null;
+  const bucks = roster || await buckRoster();
+  if (!bucks.length) throw new Error('Name a buck and confirm a photo of him first');
+  const image = await photoURL(id);
+  if (!image) throw new Error('Photo is missing');
+  try {
+    const cam = db.get('devices', p.device)?.name;
+    const r = await call('/buck-match', { method: 'POST', body: { image, bucks, note: [cam, p.date, p.time].filter(Boolean).join(' ') } });
+    return db.put('photos', { ...db.get('photos', id), buckAI: { ...r.result, model: r.model, at: new Date().toISOString() } });
+  } catch (err) {
+    if (err instanceof TypeError || err.status === 429) throw err; // offline or capped: try again next sync
+    return db.put('photos', { ...db.get('photos', id), buckAI: { match: 'error', reason: err.message, at: new Date().toISOString() } });
+  }
+}
+async function matchPendingBucks() {
+  if (!db.settings().relayInfo?.sources?.buckMatch) return 0;
+  const since = C.addDays(C.today(), -30);
+  const todo = db.all('photos').filter((p) => !p.buck && !p.buckAI && p.date >= since && photoTags(p).includes('buck'))
+    .sort((a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1)).slice(0, MATCH_PER_SYNC);
+  if (!todo.length) return 0;
+  const roster = await buckRoster();
+  if (!roster.length) return 0;
+  let n = 0;
+  for (const p of todo) {
+    try { await matchBuckPhoto(p.id, roster); n++; } catch (err) { if (err.status === 429) break; throw err; }
+  }
+  return n;
 }
 
 /* ---------------------- brush density from a photo ---------------------- */
