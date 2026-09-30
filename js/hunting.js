@@ -72,7 +72,14 @@ const n1 = (x) => (Math.round(Number(x) * 10) / 10).toString();
  *   dailyAvgTemps daily average temps, newest first (today, yesterday, …)
  *   rainToday     inches so far today
  */
-export function huntingOutlook(key, { data = {}, pressTrend = null, dailyAvgTemps = [], lat = 30.7488, lon = -99.2303, now = Date.now() } = {}) {
+export function huntingOutlook(key, {
+  data = {}, pressTrend = null, dailyAvgTemps = [], lat = 30.7488, lon = -99.2303, now = Date.now(),
+  tempChange24h = null, // °F change vs the same hour yesterday (from the forecast): catches a front the day it lands
+  cloud = null,         // forecast cloud cover %, used instead of the solar sensor
+  activity = null,      // cameraActivity() for this species: when your cameras actually see them
+  solunar = null,       // solunarDay() periods for this date
+  buckDaylight = 0,     // named bucks seen in daylight in the last 7 days
+} = {}) {
   const game = GAME.find((g) => g.key === key);
   if (!game) throw new Error(`unknown game ${key}`);
   const f = [];
@@ -105,8 +112,11 @@ export function huntingOutlook(key, { data = {}, pressTrend = null, dailyAvgTemp
   const fullMoon = Math.abs(age - 14.77) <= 2;
   const temps = dailyAvgTemps.map(Number);
   const cooling = Number.isFinite(temps[1]) && Number.isFinite(temps[3]) ? temps[3] - temps[1] : null; // yesterday vs 3 days ago
-  const front = cooling != null && cooling >= 8;
-  const cloudy = el > 15 && v('solarradiation') != null && v('solarradiation') < 0.45 * 1000 * Math.sin(el * Math.PI / 180);
+  const drop24 = tempChange24h != null && tempChange24h <= -10 ? -tempChange24h : null;
+  const front = (cooling != null && cooling >= 8) || drop24 != null;
+  const frontNote = drop24 != null ? `About ${Math.round(drop24)}°F colder than this time yesterday` : `About ${Math.round(cooling)}°F cooler than a few days ago`;
+  const cloudy = cloud != null ? el > 15 && cloud >= 70
+    : el > 15 && v('solarradiation') != null && v('solarradiation') < 0.45 * 1000 * Math.sin(el * Math.PI / 180);
   const month = Number(date.slice(5, 7)), md = date.slice(5);
   const windNote = (w) => `${Math.round(w)} mph${gust != null && gust > w + 8 ? `, gusting ${Math.round(gust)}` : ''}`;
 
@@ -122,7 +132,7 @@ export function huntingOutlook(key, { data = {}, pressTrend = null, dailyAvgTemp
     }
     if (rate > 0.05) add('Rain', -15, 'Raining. Doves sit tight until it passes.');
     else if (rainDay > 0.25) add('Rain', 0, 'Rain today. Birds scatter to puddles instead of the tank.');
-    if (front && month <= 10) add('Cold front', 10, `About ${Math.round(cooling)}°F cooler than a few days ago. A north front pushes fresh birds down from the north.`);
+    if (front && month <= 10) add('Cold front', 10, `${frontNote}. A north front pushes fresh birds down from the north.`);
     if ((temp ?? 0) >= 95 && evening) add('Heat', 5, 'Hot and dry, so water holes will draw birds this evening.');
   }
 
@@ -131,7 +141,7 @@ export function huntingOutlook(key, { data = {}, pressTrend = null, dailyAvgTemp
     else if (morning || evening) add('Time of day', 20, 'Dawn or dusk, when deer move between bedding and feed.');
     else if (md >= '11-05' && md <= '12-05') add('Time of day', 5, 'Midday, but it\'s the rut: bucks cruise at all hours, so an all-day sit can pay.');
     else add('Time of day', -10, 'Midday. Deer are mostly bedded.');
-    if (front) add('Cold front', 15, `About ${Math.round(cooling)}°F cooler than a few days ago. The first cool days after a front get deer on their feet.`);
+    if (front) add('Cold front', 15, `${frontNote}. The first cool days after a front get deer on their feet.`);
     if (temp != null) {
       if (temp <= 50) add('Temperature', 5, `Cool (${Math.round(temp)}°F). Deer move more.`);
       else if (temp >= 75) add('Temperature', -15, `Warm (${Math.round(temp)}°F). Deer bed in shade and move only at last light.`);
@@ -219,7 +229,24 @@ export function huntingOutlook(key, { data = {}, pressTrend = null, dailyAvgTemp
     if (rate > 0) add('Rain', -5, 'Rain: cats hole up.');
   }
 
-  const score = Math.max(0, Math.min(100, 50 + f.reduce((a, x) => a + x.pts, 0)));
+  // What your own cameras say about this hour.
+  if (activity && activity.total >= 5) {
+    const mins = new Date(now).getHours() * 60 + new Date(now).getMinutes();
+    const hit = activity.cameras.filter((c) => c.window && mins >= c.window.start - 60 && mins <= c.window.end + 60);
+    const fmt = (m) => { const h = Math.floor(m / 60) % 24, mm = m % 60; return `${h % 12 || 12}:${String(mm).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`; };
+    if (hit.length) add('Your cameras', 10, `${hit.map((c) => `${c.name}: ${fmt(c.window.start)}–${fmt(c.window.end)} (${c.window.n} of ${c.n} photos)`).join('; ')} over the last ${activity.days} days.`);
+    else if (!night || key === 'hog' || key === 'coyote') add('Your cameras', -5, `Your cameras rarely catch them at this hour (${activity.total} photos in ${activity.days} days, mostly at other times).`);
+  }
+  if (key === 'deer' && buckDaylight > 0) add('Named bucks', 5, `${buckDaylight} daylight sighting${buckDaylight === 1 ? '' : 's'} of your named bucks this week.`);
+  if (solunar) {
+    const hitP = solunar.periods.find((x) => now >= x.start && now <= x.end);
+    if (hitP) add('Solunar', hitP.major ? 5 : 3, `${hitP.major ? 'Major' : 'Minor'} solunar period (${hitP.label}). Many hunters see more movement then.`);
+  }
+
+  // Points ease toward 0 and 100 instead of piling up past them, so a
+  // stacked-up great sit still ranks above a merely good one.
+  const sum = f.reduce((a, x) => a + x.pts, 0);
+  const score = Math.round(50 + 50 * Math.tanh(sum / 50));
   const cond = score >= 75 ? 'excellent' : score >= 60 ? 'good' : score >= 40 ? 'fair' : 'poor';
   const level = season.open ? cond : 'closed';
   const best = [...f].sort((a, b) => b.pts - a.pts)[0];
@@ -231,4 +258,97 @@ export function huntingOutlook(key, { data = {}, pressTrend = null, dailyAvgTemp
     : !legalNow ? `Outside legal shooting hours. Legal ${now < hours.start ? 'from' : 'again tomorrow from'} ${t(now < hours.start ? hours.start : hours.start + 86400000)}.`
       : `${lead}${why ? ` ${why.label}: ${why.note.split(/\.\s/)[0].replace(/\.$/, '')}.` : ''}`;
   return { key, game, score, level, cond, season, hours, legalNow, headline, factors: f };
+}
+
+/* ------------------------ camera activity by hour ------------------------ */
+const GAME_TAGS = { deer: ['buck', 'doe', 'fawn', 'deer'], dove: ['dove'], turkey: ['turkey'], hog: ['hog'], coyote: ['coyote'], bobcat: ['bobcat'] };
+
+/**
+ * When your cameras see a species: per camera, photo counts by hour and the
+ * busiest 90-minute window, over the last `days` days.
+ * photos: [{ date, time 'HH:MM', device, tags: [...] }]; cameraName(id) → label.
+ */
+export function cameraActivity(photos, key, { days = 14, today, cameraName = (x) => x || 'Camera' } = {}) {
+  const want = GAME_TAGS[key] || [key];
+  const cut = new Date(today); cut.setDate(cut.getDate() - days);
+  const since = ymd(cut);
+  const hits = photos.filter((p) => p.date >= since && p.date <= ymd(new Date(today)) && p.time && p.tags.some((t) => want.includes(t)));
+  const by = new Map();
+  for (const p of hits) {
+    const k = p.device || '';
+    const c = by.get(k) || { device: k, name: cameraName(k), n: 0, mins: [] };
+    const [h, m] = p.time.split(':').map(Number);
+    c.n++; c.mins.push(h * 60 + (m || 0));
+    by.set(k, c);
+  }
+  const cameras = [...by.values()].map((c) => {
+    // Busiest 90-minute window, sliding in 10-minute steps.
+    let best = null;
+    for (let s0 = 0; s0 < 1440; s0 += 10) {
+      const n = c.mins.filter((m) => m >= s0 && m < s0 + 90).length;
+      if (!best || n > best.n) best = { start: s0, end: s0 + 90, n };
+    }
+    const hours = Array(24).fill(0);
+    for (const m of c.mins) hours[Math.floor(m / 60)]++;
+    return { device: c.device, name: c.name, n: c.n, hours, window: best && best.n >= 2 ? best : null };
+  }).sort((a, b) => b.n - a.n);
+  return { key, days, total: hits.length, cameras };
+}
+
+/* --------------------------------- stands -------------------------------- */
+const DIRS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+export const compass8 = (deg) => (Number.isFinite(Number(deg)) ? DIRS8[Math.round(((Number(deg) % 360) + 360) % 360 / 45) % 8] : null);
+/** "S, SW and W" → ['S', 'SW', 'W']. */
+export const parseWinds = (txt) => [...new Set(String(txt || '').toUpperCase().match(/\b(NE|NW|SE|SW|N|E|S|W)\b/g) || [])];
+
+/**
+ * Stands ranked for a sit: the wind has to be one the stand hunts well on
+ * (a neighboring direction counts as marginal), it has to suit the species,
+ * and a linked camera that's seeing the game counts in its favor.
+ */
+export function recommendStands(stands, { key, winddir, activity = null }) {
+  const w = compass8(winddir);
+  const out = [];
+  for (const st of stands) {
+    const sp = String(st.species || '').toLowerCase();
+    if (sp && !sp.includes(key === 'deer' ? 'deer' : key)) continue;
+    const winds = parseWinds(st.winds);
+    let score = 0; const why = [];
+    if (!winds.length) why.push('no good winds set');
+    else if (w && winds.includes(w)) { score += 10; why.push(`${w} wind ✓`); }
+    else if (w && winds.some((x) => { const d = (DIRS8.indexOf(x) - DIRS8.indexOf(w) + 8) % 8; return d === 1 || d === 7; })) { score += 3; why.push(`${w} wind is marginal`); }
+    else if (w) { score -= 10; why.push(`${w} wind is wrong for this stand`); }
+    const cam = st.camera && activity?.cameras.find((c) => c.device === st.camera);
+    if (cam) { score += Math.min(6, cam.n); why.push(`${cam.n} photos on ${cam.name}`); }
+    out.push({ stand: st, score, ok: score > 0, why });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+/* ------------------------------- hunt log -------------------------------- */
+/**
+ * What's worked on your place: average game seen per hunt, grouped by wind,
+ * session, temperature, front and stand. Needs a handful of logged hunts.
+ */
+export function huntInsights(hunts, key) {
+  const hs = hunts.filter((h) => (h.species || 'deer') === key && h.seen !== '' && h.seen != null && Number.isFinite(Number(h.seen)));
+  const group = (label, fn) => {
+    const g = new Map();
+    for (const h of hs) { const k = fn(h); if (k == null || k === '') continue; const x = g.get(k) || { k, n: 0, seen: 0 }; x.n++; x.seen += Number(h.seen); g.set(k, x); }
+    const rows = [...g.values()].map((x) => ({ ...x, avg: x.seen / x.n })).sort((a, b) => b.avg - a.avg);
+    return { label, rows };
+  };
+  const band = (t) => (t == null ? null : t < 45 ? 'under 45°F' : t < 60 ? '45–60°F' : t < 75 ? '60–75°F' : '75°F+');
+  return {
+    n: hs.length,
+    avg: hs.length ? hs.reduce((a, h) => a + Number(h.seen), 0) / hs.length : null,
+    groups: [
+      group('Wind direction', (h) => h.cond?.dir),
+      group('Wind speed', (h) => (h.cond?.wind == null ? null : h.cond.wind < 8 ? 'under 8 mph' : h.cond.wind <= 15 ? '8–15 mph' : 'over 15 mph')),
+      group('Session', (h) => h.session),
+      group('Temperature', (h) => band(h.cond?.tempf)),
+      group('After a front', (h) => (h.cond?.front == null ? null : h.cond.front ? 'yes' : 'no')),
+      group('Stand', (h) => h.standName || null),
+    ].filter((g) => g.rows.length > 1),
+  };
 }

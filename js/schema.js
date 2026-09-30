@@ -137,6 +137,32 @@ export const COLLECTIONS = {
     ],
     cols: ['name', 'status', 'points', 'age', 'marks'],
   },
+  stands: {
+    label: 'Stand / blind', sort: 'name',
+    fields: [
+      { k: 'name', label: 'Name', t: 'text', req: 1, help: 'e.g. “Creek tripod”, “North box blind”.' },
+      { k: 'kind', label: 'Kind', t: 'select', opts: o(['box', 'Box blind'], ['tripod', 'Tripod / tower'], ['ladder', 'Ladder / lock-on'], ['ground', 'Ground blind'], ['dove', 'Dove field spot'], ['other', 'Other']), def: 'box' },
+      { k: 'species', label: 'For', t: 'select', opts: o(['', 'Anything'], ['deer', 'Deer'], ['turkey', 'Turkey'], ['dove', 'Dove'], ['hog', 'Hogs'], ['coyote', 'Coyotes / predators']), def: '' },
+      { k: 'winds', label: 'Good winds', t: 'text', req: 1, help: 'Directions the wind can come FROM without carrying your scent to where game comes from, e.g. “S, SW, W”.' },
+      { k: 'camera', label: 'Camera watching it', t: 'ref', ref: 'devices' },
+      loc, notes,
+    ],
+    cols: ['name', 'kind', 'species', 'winds'],
+  },
+  hunts: {
+    label: 'Hunt', sort: '-date',
+    fields: [
+      { k: 'date', label: 'Date', t: 'date', req: 1, def: today },
+      { k: 'session', label: 'Session', t: 'select', opts: o(['AM', 'Morning'], ['PM', 'Evening'], ['midday', 'Midday'], ['night', 'Night'], ['all', 'All day']), def: 'PM' },
+      { k: 'species', label: 'Hunting', t: 'select', opts: o(['deer', 'Deer'], ['dove', 'Dove'], ['turkey', 'Turkey'], ['hog', 'Hogs'], ['coyote', 'Coyotes'], ['bobcat', 'Bobcats']), def: 'deer' },
+      { k: 'stand', label: 'Stand / blind', t: 'ref', ref: 'stands' },
+      { k: 'seen', label: 'How many did you see?', t: 'num', req: 1, help: 'Everything of that species you saw, shot at or not. Zero counts too; it\'s how the app learns what doesn\'t work.' },
+      { k: 'bucks', label: 'Bucks seen (deer)', t: 'num', show: (r) => (r.species || 'deer') === 'deer' },
+      { k: 'harvested', label: 'Harvested', t: 'num', def: 0 },
+      notes,
+    ],
+    cols: ['date', 'session', 'species', 'stand', 'seen', 'harvested'],
+  },
   camsurveys: {
     label: 'Camera census', sort: '-date',
     fields: [

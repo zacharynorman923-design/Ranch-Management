@@ -471,6 +471,7 @@ const LAYERS = [
   { col: 'dovefields', label: 'Dove fields', color: '#A855F7', name: (r) => r.name },
   { col: 'pastures', label: 'Pastures', color: '#65A30D', name: (r) => r.name },
   { col: 'brushscans', label: 'Brush photos', color: '#15803D', name: (r) => `${r.area || 'brush photo'} ${r.date}${r.result ? ` · ${r.result.species.filter((x) => x.species !== 'other brush').map((x) => `${x.species} ${Math.round(x.canopy_cover_pct)}%`).join(', ') || 'no target brush'}` : ''}` },
+  { col: 'stands', label: 'Stands & blinds', color: '#7C3AED', name: (r) => `${r.name}${r.winds ? ` (${r.winds} wind)` : ''}` },
   { col: 'photos', label: 'Photos', color: '#E11D48', name: (r) => r.caption || r.date },
 ];
 
@@ -727,7 +728,7 @@ function stopWalk() {
 /* ---------------------------- drop a pin ---------------------------------- */
 const PIN_TYPES = [
   ['waterpoints', '💧 Water point'], ['devices', '📷 Camera / feeder'], ['fences', '🚪 Gate / fence'],
-  ['brush', '🌳 Brush treatment'], ['dovefields', '🕊 Dove field'], ['pastures', '🌾 Pasture'],
+  ['brush', '🌳 Brush treatment'], ['dovefields', '🕊 Dove field'], ['pastures', '🌾 Pasture'], ['stands', '🪜 Stand / blind'],
 ];
 function pinChooser(lat, lon) {
   const loc = { lat, lon };
