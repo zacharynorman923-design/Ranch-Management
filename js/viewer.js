@@ -107,6 +107,10 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     const one = { buck: 'buck', doe: 'doe', fawn: 'fawn' };
     const said = (o) => kinds.filter(([k]) => o[k]).map(([k, l]) => `${o[k]} ${o[k] === 1 ? one[k] : l.toLowerCase()}`).join(', ') || 'no deer';
     const cam = db.get('devices', p.device)?.name || 'this camera';
+    if (v?.reviewed) {
+      box.innerHTML = `<div>📊 <b>Census</b> · ✓ checked visit${v.ids.length > 1 ? ` (${v.ids.length} photos on ${esc(cam)})` : ''}: counted as <b>${esc(said(v.counts))}</b>.</div><div><small>To change it, use <b>Check the photos</b> in the camera census.</small></div>`;
+      return;
+    }
     box.innerHTML = `<div>📊 <b>Census</b> · this photo: ${kinds.map(([k, l]) => `<span class="v-cnt">${l} <button type="button" data-cnt="${k}:-1" aria-label="fewer ${l}">−</button><b>${mine[k] || 0}</b><button type="button" data-cnt="${k}:1" aria-label="more ${l}">+</button></span>`).join('')}
         <small>${p.counts ? '✏️ your count · <button type="button" class="v-link" data-cnt-reset>use the AI\'s</button>' : 'from the AI label'}</small></div>
       <div><small>${v && v.ids.length > 1
