@@ -85,3 +85,22 @@ test('census visits: bursts on one camera count once, at the most seen in any ph
   // Your hand count wins.
   assert.deepEqual(D.photoDeer({ counts: { doe: 1 }, tags: 'doe, fawn', aiCounts: { doe: 4 } }), { buck: 0, doe: 1, fawn: 0, deer: 0 });
 });
+
+test('census review: a checked visit keeps your counts and bucks until it regroups', () => {
+  const ids = ['a1', 'a2'];
+  const review = { ids, counts: { doe: 1, fawn: 2 }, bucks: ['big8'] };
+  const photos = [
+    { id: 'a1', date: '2026-09-10', time: '19:02', device: 'feeder', aiCounts: { doe: 3 }, review },
+    { id: 'a2', date: '2026-09-10', time: '19:04', device: 'feeder', aiCounts: { doe: 2, buck: 1 }, review },
+  ];
+  const [v] = D.censusVisits(photos, 5);
+  assert.equal(v.reviewed, true);
+  assert.deepEqual(v.counts, { buck: 0, doe: 1, fawn: 2, deer: 0 });
+  assert.deepEqual([...v.bucks], ['big8']);
+  assert.deepEqual([...D.censusBuckIds(photos)], ['big8']);
+  // Every photo on its own: the review no longer matches, so the AI counts are used.
+  const split = D.censusVisits(photos, 0);
+  assert.equal(split.length, 2);
+  assert.ok(split.every((x) => !x.reviewed));
+  assert.equal(split.find((x) => x.ids[0] === 'a1').counts.doe, 3);
+});

@@ -97,6 +97,7 @@ export function censusCorrection(days) {
  * photo of the visit. gapMin 0 counts every photo on its own.
  */
 export function censusVisits(photos, gapMin = 5) {
+  const byId = new Map(photos.map((p) => [p.id, p]));
   const at = (p) => photoTime(p)?.getTime();
   const sorted = [...photos].sort((a, b) => String(a.device || '').localeCompare(String(b.device || '')) || (at(a) ?? 0) - (at(b) ?? 0));
   const visits = [];
@@ -111,7 +112,26 @@ export function censusVisits(photos, gapMin = 5) {
     for (const k of Object.keys(cur.counts)) cur.counts[k] = Math.max(cur.counts[k], c[k] || 0);
     if (p.buck) cur.bucks.add(p.buck);
   }
+  // A visit you checked in census review keeps your counts and bucks, as long
+  // as it's still the same set of photos (a different burst gap regroups them).
+  for (const v of visits) {
+    const recs = v.ids.map((id) => byId.get(id));
+    const r = recs[0]?.review;
+    if (r && reviewKey(r.ids) === reviewKey(v.ids) && recs.every((p) => p.review && reviewKey(p.review.ids) === reviewKey(v.ids))) {
+      v.counts = { buck: 0, doe: 0, fawn: 0, deer: 0, ...r.counts };
+      for (const b of r.bucks || []) v.bucks.add(b);
+      v.reviewed = true;
+    }
+    v.key = v.ids[0];
+  }
   return visits;
+}
+const reviewKey = (ids) => [...(ids || [])].sort().join('|');
+/** Named bucks seen in a set of photos, from tags on photos and checked visits. */
+export function censusBuckIds(photos) {
+  const set = new Set();
+  for (const p of photos) { if (p.buck) set.add(p.buck); for (const b of p.review?.bucks || []) set.add(b); }
+  return set;
 }
 
 /**
