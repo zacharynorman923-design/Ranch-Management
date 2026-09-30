@@ -15,14 +15,20 @@ const deg = (x) => (x == null ? '—' : `${n0(x)}°`);
 
 const FISH_TONE = { excellent: 'good', good: 'good', fair: 'warn', poor: 'bad', unsafe: 'bad' };
 const clock = (ms) => (ms == null ? '—' : new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
-function fishing() {
+/** What the outlooks need from the station: current reading, pressure trend, place and recent days. */
+export function stationContext() {
   const s = db.settings();
   const w = s.weatherNow;
   if (!w?.data) return null;
   const loc = s.relayInfo?.location;
   const [lat, lon] = Number.isFinite(loc?.lat) && Number.isFinite(loc?.lon) && (loc.lat || loc.lon) ? [loc.lat, loc.lon] : [30.7488, -99.2303];
-  const recent = db.all('wxdays').sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 3).map((d) => d.f?.tempf?.[2]);
-  return { ...C.fishingOutlook({ data: w.data, pressTrend: w.pressTrend3h ?? null, recentAvgTemps: recent, lat, lon }), sun: C.sunTimes(lat, lon, Date.now()) };
+  const days = db.all('wxdays').sort((a, b) => (a.date < b.date ? 1 : -1));
+  return { w, data: w.data, pressTrend: w.pressTrend3h ?? null, lat, lon, dailyAvgTemps: days.slice(0, 4).map((d) => d.f?.tempf?.[2]) };
+}
+function fishing() {
+  const x = stationContext();
+  if (!x) return null;
+  return { ...C.fishingOutlook({ data: x.data, pressTrend: x.pressTrend, recentAvgTemps: x.dailyAvgTemps.slice(0, 3), lat: x.lat, lon: x.lon }), sun: C.sunTimes(x.lat, x.lon, Date.now()) };
 }
 /** Dashboard tile for the fishing outlook, or ''. */
 export function fishingTile() {
@@ -37,6 +43,7 @@ function fishingPanel() {
     <p class="big">${esc(o.headline)}</p>
     <ul class="plain fish-factors">${o.factors.map((x) => `<li><span class="fish-pts ${x.pts > 0 ? 'good-t' : x.pts < 0 ? 'bad-t' : 'muted'}">${x.pts > 0 ? '+' : ''}${x.pts}</span><div><b>${esc(x.label)}.</b> ${esc(x.note)}</div></li>`).join('')}</ul>
     <p class="note">Best windows today: <b>${clock(o.sun.rise && o.sun.rise - 45 * 60000)}–${clock(o.sun.rise && o.sun.rise + 90 * 60000)}</b> around sunrise (${clock(o.sun.rise)}) and <b>${clock(o.sun.set && o.sun.set - 90 * 60000)}–${clock(o.sun.set && o.sun.set + 45 * 60000)}</b> around sunset (${clock(o.sun.set)}).</p>
+    <p class="small"><a href="#/hunt">🦌 Hunting outlook for dove, deer, turkey and varmints →</a></p>
     <details class="lines"><summary>How this is scored</summary>
       <p class="small" style="margin-top:8px">It's built for stock tanks (bass, bream and catfish). It starts at 50 and adds or subtracts points for:
       <ul class="plain small">
