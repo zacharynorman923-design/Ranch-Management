@@ -4,7 +4,7 @@
    zooming shows real detail. The tag buttons correct the AI's label. */
 import * as db from './db.js';
 import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
-import { relayPhotoBlob } from './relay.js';
+import { relayPhotoBlob, relayConfigured, matchBuckPhoto } from './relay.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
@@ -29,6 +29,7 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
       <div class="v-ai" data-ai></div>
       <button type="button" class="v-ok" data-okay hidden>✓ OK, that was us</button>
       <div class="v-tags" data-tags></div>
+      <div class="v-buck" data-buck hidden></div>
       <div class="v-actions"><span class="v-count" data-count></span><span class="v-hd" data-hd></span>
         <a class="v-btn" data-save download>Save</a>${onEdit ? '<button type="button" class="v-btn" data-edit>Edit details</button>' : ''}</div>
     </div>`;
@@ -61,6 +62,35 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
   const reset = () => { s = 1; tx = 0; ty = 0; apply(); };
 
   // ---- showing a photo ----
+  // Which named buck is this? AI suggestion to confirm, or pick one yourself.
+  const renderBuck = (p, eff) => {
+    const box = $('[data-buck]');
+    const bucks = db.all('bucks').filter((b) => (b.status || 'active') === 'active' || b.id === p.buck).sort((a, b) => String(a.name).localeCompare(b.name));
+    if (!eff.includes('buck') && !p.buck) { box.hidden = true; return; }
+    box.hidden = false;
+    const mine = p.buck ? db.get('bucks', p.buck) : null;
+    const ai = p.buckAI;
+    const aiBuck = ai && db.get('bucks', ai.match);
+    let line = '';
+    if (mine) {
+      const star = (mine.refs || []).includes(p.id);
+      line = `🦌 <b>${esc(mine.name)}</b> ✓ <button type="button" class="v-link" data-bk-star>${star ? '★ reference photo' : '☆ use as reference'}</button> <button type="button" class="v-link" data-bk-clear>not him</button>`;
+    } else if (aiBuck) {
+      line = `🤖 Looks like <b>${esc(aiBuck.name)}</b> <small>(${esc(ai.confidence)})</small>${ai.reason ? `<br><small>${esc(ai.reason)}</small>` : ''}
+        <div class="v-row"><button type="button" class="v-tag on" data-bk-yes>✓ Yes, ${esc(aiBuck.name)}</button><button type="button" class="v-tag" data-bk-no>✕ No</button></div>`;
+    } else if (ai?.match === 'new') {
+      line = `🤖 Looks like a buck you haven't named yet${ai.rack ? `: <small>${esc(ai.rack)}</small>` : ''}`;
+    } else if (ai?.match === 'unsure') {
+      line = `🤖 Can't tell which buck${ai.rack ? ` <small>(${esc(ai.rack)})</small>` : ''}`;
+    } else if (ai?.match === 'error') {
+      line = `<small>Buck match failed: ${esc(ai.reason || '')}</small>`;
+    }
+    box.innerHTML = `${line ? `<div>${line}</div>` : ''}
+      ${mine ? '' : `<div class="v-row"><small>Which buck?</small>${bucks.map((b) => `<button type="button" class="v-tag" data-bk="${esc(b.id)}">${esc(b.name)}</button>`).join('')}
+        <button type="button" class="v-tag" data-bk-new>＋ New buck</button>
+        ${bucks.length && relayConfigured() ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>`}`;
+  };
+
   const renderInfo = () => {
     const p = db.get('photos', ids[i]);
     if (!p) return;
@@ -77,6 +107,7 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
       return `<button type="button" class="v-tag ${on ? 'on' : ''}" data-fix="${t}">${t}</button>`;
     }).join('');
     $('[data-okay]').hidden = !needsReview(p);
+    renderBuck(p, eff);
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;
     $('[data-next]').hidden = i === ids.length - 1;
@@ -185,6 +216,33 @@ export function openViewer(ids, index = 0, { onEdit } = {}) {
       // Next photo in a burst that still needs a look.
       const k = ids.findIndex((id, j) => j > i && needsReview(db.get('photos', id)));
       if (k > 0) setTimeout(() => show(k), 350);
+      return;
+    }
+    const bk = e.target.closest('[data-bk],[data-bk-new],[data-bk-yes],[data-bk-no],[data-bk-clear],[data-bk-star],[data-bk-ask]');
+    if (bk) {
+      const p = db.get('photos', ids[i]);
+      if (!p) return;
+      const tagged = (x) => (photoTags(x).includes('buck') ? x : { ...x, tags: [...photoTags(x).filter((t) => t !== 'empty'), 'buck'].join(', ') });
+      if (bk.dataset.bk) await db.put('photos', tagged({ ...p, buck: bk.dataset.bk }));
+      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...p, buck: p.buckAI.match }));
+      else if (bk.hasAttribute('data-bk-no')) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
+      else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...p, buck: '' });
+      else if (bk.hasAttribute('data-bk-new')) {
+        const name = (prompt('Name this buck (e.g. Big 8, Drop Tine):') || '').trim();
+        if (!name) return;
+        const b = await db.put('bucks', { name, status: 'active', refs: [p.id], points: p.buckAI?.rack?.match(/\b(\d{1,2})\b/)?.[1] || '' });
+        await db.put('photos', tagged({ ...p, buck: b.id }));
+      } else if (bk.hasAttribute('data-bk-star')) {
+        const b = db.get('bucks', p.buck);
+        if (b) {
+          const refs = b.refs || [];
+          await db.put('bucks', { ...b, refs: refs.includes(p.id) ? refs.filter((x) => x !== p.id) : [p.id, ...refs].slice(0, 3) });
+        }
+      } else if (bk.hasAttribute('data-bk-ask')) {
+        bk.disabled = true; bk.textContent = '🤖 Comparing…';
+        try { await matchBuckPhoto(p.id); } catch (err) { bk.textContent = `🤖 ${err.message}`; return; }
+      }
+      renderInfo();
       return;
     }
     const fix = e.target.closest('[data-fix]');

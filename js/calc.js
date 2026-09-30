@@ -406,6 +406,7 @@ export function practiceCoverage(year, src) {
   for (const p of src.practices || []) if (inYear(p.date) && ev[p.practice]) ev[p.practice].push({ date: p.date, text: p.activity || '', source: 'Practice log' });
   for (const b of src.brush || []) if (inYear(b.date)) ev.habitat.push({ date: b.date, text: `${b.species} ${b.method || 'treatment'}, ${num(b.acres)} ac${b.area ? ' — ' + b.area : ''}`, source: 'Brush management' });
   for (const s of src.surveys || []) if (inYear(s.date)) ev.census.push({ date: s.date, text: `Spotlight count, ${s.route || 'route'} (${num(s.miles)} mi)`, source: 'Spotlight survey' });
+  for (const s of src.camsurveys || []) if (inYear(s.date)) ev.census.push({ date: s.date, text: `Camera census ${s.date} to ${s.end}: ${num(s.uniqueBucks)} unique buck${num(s.uniqueBucks) === 1 ? '' : 's'}, about ${Math.round(num(s.total))} deer`, source: 'Camera survey' });
   for (const m of src.waterWork || []) if (inYear(m.date) && m.wildlife) ev.water.push({ date: m.date, text: m.work || 'Water point work', source: 'Water points' });
   for (const f of src.feedings || []) if (inYear(f.date)) ev.food.push({ date: f.date, text: `${f.what || 'Feeder refill'}${f.device ? ' — ' + f.device : ''}`, source: 'Feeders' });
   for (const f of src.doveFields || []) if (inYear(f.plantDate)) ev.food.push({ date: f.plantDate, text: `${f.crop || 'Food plot'} planted, ${num(f.acres)} ac — ${f.name}`, source: 'Food plots' });

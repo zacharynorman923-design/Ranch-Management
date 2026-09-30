@@ -141,6 +141,15 @@ figures are:
 - **Set a monthly spend limit** in the Anthropic console too, as a second
   guardrail.
 
+**Buck matching.** Once you name bucks in the app's Buck tracker, the phone
+sends each new buck photo to the relay's `/buck-match` along with up to three
+reference photos per named buck. Claude compares the racks and answers with a
+named buck, "new" or "unsure", and you confirm it in the app. It uses the
+same `ANTHROPIC_API_KEY`, with `BUCK_MATCH_MODEL` and a daily cap of
+`BUCK_MATCH_DAILY_LIMIT` (80) in `wrangler.toml`. Each comparison sends
+several images, so it costs a few times a normal label; only buck photos are
+compared.
+
 Labels are a first pass. They can mis-sex a doe at night or miss an animal at
 the edge of the frame, and a correction you tap in the app always wins.
 

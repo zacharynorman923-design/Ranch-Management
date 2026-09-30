@@ -14,6 +14,7 @@
      GET  /weather?after=ISO      station's current readings + daily summaries changed since
      POST /run                    run every poll now (for setup/testing)
      POST /brush-scan             {image (base64 JPEG), view, note} → brush density estimate
+     POST /buck-match             {image, bucks: [{id, name, refs: [base64]}]} → which named buck it is
    ========================================================================= */
 import { safeEqual, fixRanchCoords } from './lib.js';
 import { kvGet, kvSet } from './store.js';
@@ -21,6 +22,7 @@ import { pollRain } from './rain.js';
 import { pollTactacam, prunePhotos } from './tactacam.js';
 import { classifyPending } from './classify.js';
 import { analyzeBrushPhoto } from './brushscan.js';
+import { matchBuck } from './buckmatch.js';
 import { pollAmbient, weatherFeed } from './weather.js';
 
 const CORS = {
@@ -77,6 +79,7 @@ export default {
           estimate: !!(env.RANCH_LAT && env.RANCH_LON),
           classifier: env.ANTHROPIC_API_KEY ? (env.CLASSIFIER_MODEL || 'claude-opus-5') : false,
           brushScan: env.ANTHROPIC_API_KEY ? (env.BRUSH_SCAN_MODEL || 'claude-opus-5') : false,
+          buckMatch: env.ANTHROPIC_API_KEY ? (env.BUCK_MATCH_MODEL || 'claude-opus-5') : false,
         },
         // Where the weather-model estimate is computed. 30.7488, -99.2303 is Mason town (the default).
         location: (() => {
@@ -100,7 +103,7 @@ export default {
       const after = Number(url.searchParams.get('after')) || 0;
       const limit = Math.min(50, Number(url.searchParams.get('limit')) || 50);
       const { results } = await env.DB.prepare(`SELECT p.seq, p.id, p.camera_id, p.camera, p.taken, p.lat, p.lon, p.temp, p.moon, p.battery, p.signal, p.bytes,
-          CASE WHEN l.status = 'done' THEN l.tags END AS ai_tags, CASE WHEN l.status = 'done' THEN l.summary END AS ai_summary
+          CASE WHEN l.status = 'done' THEN l.tags END AS ai_tags, CASE WHEN l.status = 'done' THEN l.summary END AS ai_summary, CASE WHEN l.status = 'done' THEN l.labels END AS ai_labels
         FROM photos p LEFT JOIN photo_labels l ON l.id = p.id WHERE p.seq > ?1 ORDER BY p.seq LIMIT ?2`).bind(after, limit).all();
       return json(results);
     }
@@ -123,6 +126,13 @@ export default {
       return new Response(body, { headers: { ...CORS, 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
     }
     if (p === '/run' && req.method === 'POST') return json(await runAll(env));
+    if (p === '/buck-match' && req.method === 'POST') {
+      try {
+        return json(await matchBuck(env, await req.json()));
+      } catch (err) {
+        return json({ error: String(err.message || err) }, err.status || 502);
+      }
+    }
     if (p === '/brush-scan' && req.method === 'POST') {
       try {
         return json(await analyzeBrushPhoto(env, await req.json()));

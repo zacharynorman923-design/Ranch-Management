@@ -5,6 +5,8 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { photoTags, needsReview } from './photos.js';
+import { ranchPlace } from './place.js';
+import { inDaylight } from './deer.js';
 
 export const DEFAULTS = {
   ranchName: 'Mason County place',
@@ -103,6 +105,13 @@ export function alerts(asOf = C.today()) {
     out.push({ tone: 'bad', sort: -60, href: '#/photos?tag=person', photos: g.ids,
       text: `${[...g.what].sort().join(' & ')} on ${db.get('devices', g.device)?.name || 'a camera'}, ${g.date}${when}${n > 1 ? ` (${n} photos)` : ''}` });
   }
+  // A named buck out in daylight in the last 3 days: worth a sit.
+  const place = ranchPlace();
+  const threeAgo = C.addDays(asOf, -3);
+  for (const b of db.all('bucks').filter((x) => (x.status || 'active') === 'active')) {
+    const seen = db.all('photos').filter((p) => p.buck === b.id && p.date >= threeAgo && inDaylight(p, place.lat, place.lon)).sort((x, y) => (`${x.date} ${x.time}` < `${y.date} ${y.time}` ? 1 : -1));
+    if (seen.length) push('info', `🦌 ${b.name} in daylight${seen.length > 1 ? ` ${seen.length} times` : ''}: last ${seen[0].date} ${seen[0].time} on ${db.get('devices', seen[0].device)?.name || 'a camera'}`, `#/bucks?id=${b.id}`, -20);
+  }
   for (const d of db.all('devices')) {
     if (d.batteryPct !== '' && d.batteryPct != null && Number(d.batteryPct) < 25) push(Number(d.batteryPct) < 10 ? 'bad' : 'warn', `${d.name}: battery ${Math.round(d.batteryPct)}%`, '#/devices', Number(d.batteryPct) - 50);
     if (d.lastPhoto && d.revealId) {
@@ -173,6 +182,7 @@ export function practiceCoverage(year) {
     practices: db.all('practices'),
     brush: db.all('brush').filter((x) => x.status !== 'planned'),
     surveys: db.all('surveys'),
+    camsurveys: db.all('camsurveys'),
     waterWork: db.all('waterwork'),
     doveFields: db.all('dovefields'),
     feedings: db.all('devicelog').filter((l) => l.action === 'refill').map((l) => ({

@@ -13,6 +13,7 @@ import * as M from './pages/money.js';
 import * as O from './pages/ops.js';
 import * as WX from './pages/weather.js';
 import * as HU from './pages/hunt.js';
+import * as BK from './pages/bucks.js';
 import { APP_VERSION } from './version.js';
 import { photoURL, markPhotosOk } from './photos.js';
 import { openViewer } from './viewer.js';
@@ -24,6 +25,7 @@ const ROUTES = {
   pastures: { title: 'Pastures', group: 'Grazing', render: G.pastures, bind: G.bindPastures },
   herd: { title: 'Herd', group: 'Grazing', render: G.herd, bind: G.bindHerd },
   hunt: { title: 'Hunting outlook', group: 'Wildlife', render: HU.hunt, bind: HU.bindHunt },
+  bucks: { title: 'Buck tracker', group: 'Wildlife', render: BK.bucks, bind: BK.bindBucks },
   harvest: { title: 'Deer harvest', group: 'Wildlife', render: W.harvest, bind: W.bindHarvest },
   census: { title: 'Spotlight census', group: 'Wildlife', render: W.census },
   devices: { title: 'Cams & feeders', group: 'Wildlife', render: W.devices, bind: W.bindDevices },

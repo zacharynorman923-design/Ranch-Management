@@ -125,6 +125,36 @@ export const COLLECTIONS = {
     ],
     cols: ['date', 'route', 'miles', 'bucks', 'does', 'fawns', 'unknown'],
   },
+  bucks: {
+    label: 'Named buck', sort: 'name',
+    fields: [
+      { k: 'name', label: 'Name', t: 'text', req: 1, help: 'e.g. “Big 8”, “Drop Tine”, “Split Brow”.' },
+      { k: 'status', label: 'Status', t: 'select', opts: o('active', 'harvested', ['gone', 'Not seen / moved off']), def: 'active' },
+      { k: 'points', label: 'Points (best guess)', t: 'num' },
+      { k: 'age', label: 'Estimated age', t: 'select', opts: o(['1.5', '1½'], ['2.5', '2½'], ['3.5', '3½'], ['4.5', '4½'], ['5.5', '5½+']) },
+      { k: 'marks', label: 'How to tell him apart', t: 'text', help: 'e.g. drop tine off right beam, split left brow, torn left ear.' },
+      notes,
+    ],
+    cols: ['name', 'status', 'points', 'age', 'marks'],
+  },
+  camsurveys: {
+    label: 'Camera census', sort: '-date',
+    fields: [
+      { k: 'date', label: 'First day', t: 'date', req: 1 },
+      { k: 'end', label: 'Last day', t: 'date', req: 1 },
+      { k: 'cameras', label: 'Cameras', t: 'num' },
+      { k: 'uniqueBucks', label: 'Unique bucks', t: 'num' },
+      { k: 'buckPhotos', label: 'Buck occurrences', t: 'num' },
+      { k: 'doePhotos', label: 'Doe occurrences', t: 'num' },
+      { k: 'fawnPhotos', label: 'Fawn occurrences', t: 'num' },
+      { k: 'bucks', label: 'Est. bucks', t: 'num' },
+      { k: 'does', label: 'Est. does', t: 'num' },
+      { k: 'fawns', label: 'Est. fawns', t: 'num' },
+      { k: 'total', label: 'Est. total deer', t: 'num' },
+      notes,
+    ],
+    cols: ['date', 'end', 'uniqueBucks', 'bucks', 'does', 'fawns', 'total'],
+  },
   devices: {
     label: 'Camera / feeder', sort: 'name',
     fields: [
