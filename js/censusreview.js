@@ -38,7 +38,7 @@ export const REVIEW_FILTERS = [
 const hasDeer = (v) => sum(v.counts) > 0;
 const matches = (v, f) => ({
   todo: !v.reviewed && hasDeer(v), all: hasDeer(v), buck: v.counts.buck > 0, doe: v.counts.doe > 0, fawn: v.counts.fawn > 0,
-  unidentified: v.counts.buck > 0 && !v.bucks.size, nodeer: !hasDeer(v),
+  unidentified: v.counts.buck > v.bucks.size, nodeer: !hasDeer(v),
 }[f]);
 /** How many visits each filter would show, for the census panel. */
 export function reviewCounts(visits) {
@@ -110,11 +110,11 @@ export function openCensusReview({ filter = 'todo' } = {}) {
           <button type="button" data-preset="1,0,0">1 buck</button>
           <button type="button" data-preset="${ai.buck},${ai.doe},${ai.fawn}">Same as AI</button>
         </div>
-        ${draft.counts.buck ? `<div class="cr-bucks"><div class="cr-q">Which buck${draft.counts.buck > 1 ? 's' : ''}?</div>
+        ${draft.counts.buck ? `<div class="cr-bucks"><div class="cr-q">Which buck${draft.counts.buck > 1 ? 's' : ''}? <small>Tap every buck in the visit${draft.bucks.length ? ` · ${draft.bucks.length} of ${draft.counts.buck} named` : ''}</small></div>
           <div class="cr-chips">${aiBuck && !draft.bucks.includes(aiBuck.match) ? `<button type="button" class="cr-chip ai" data-buck="${esc(aiBuck.match)}">🤖 ${esc(db.get('bucks', aiBuck.match).name)}?</button>` : ''}
             ${bucks.map((b) => `<button type="button" class="cr-chip ${draft.bucks.includes(b.id) ? 'on' : ''}" data-buck="${esc(b.id)}">${draft.bucks.includes(b.id) ? '✓ ' : ''}${esc(b.name)}</button>`).join('')}
             <button type="button" class="cr-chip" data-newbuck>＋ New buck</button>
-            <button type="button" class="cr-chip ${draft.bucks.length ? '' : 'on'}" data-nobuck>Can't tell</button></div></div>` : ''}
+            <button type="button" class="cr-chip ${draft.bucks.length ? '' : 'on'}" data-nobuck>${draft.bucks.length ? 'Clear' : "Can't tell"}</button></div></div>` : ''}
       </div>
       <footer class="cr-foot">
         <button type="button" class="btn" data-prev ${pos === 0 ? 'disabled' : ''} aria-label="Previous visit">‹</button>
@@ -130,13 +130,13 @@ export function openCensusReview({ filter = 'todo' } = {}) {
     const v = visit();
     if (!v) return;
     const rec = { ids: [...v.ids], counts: { ...draft.counts }, bucks: [...draft.bucks], at: new Date().toISOString() };
-    const only = draft.counts.buck && draft.bucks.length === 1 ? draft.bucks[0] : null;
+    // The named bucks go on the visit's buck photos (all of them if none were labeled buck).
+    const anyBuckPhoto = v.ids.some((x) => D.photoDeer(db.get('photos', x)).buck > 0);
     await db.putMany('photos', v.ids.map((id) => {
       const p = db.get('photos', id);
-      const out = { ...p, review: rec };
-      if (p.buck && !draft.bucks.includes(p.buck)) out.buck = '';
-      if (only && (D.photoDeer({ ...p, review: null }).buck > 0 || !v.ids.some((x) => D.photoDeer(db.get('photos', x)).buck > 0))) out.buck = only;
-      return out;
+      const showsBuck = D.photoDeer(p).buck > 0 || !anyBuckPhoto;
+      const keep = D.photoBucks(p).filter((x) => draft.bucks.includes(x));
+      return { ...D.withBucks(p, draft.counts.buck && showsBuck ? draft.bucks : keep), review: rec, buckAuto: false };
     }));
     state = censusNow();
     go(1);
@@ -153,16 +153,22 @@ export function openCensusReview({ filter = 'todo' } = {}) {
     if (b.hasAttribute('data-ok')) return save();
     if (b.hasAttribute('data-zoom')) { const v = visit(); return openViewer(v.ids, photoIdx); }
     if (b.dataset.ph != null) { photoIdx = Number(b.dataset.ph); return render(); }
-    if (b.dataset.cnt) { const [k, d] = b.dataset.cnt.split(':'); draft.counts[k] = Math.max(0, draft.counts[k] + Number(d)); if (!draft.counts.buck) draft.bucks = []; return render(); }
+    if (b.dataset.cnt) { const [k, d] = b.dataset.cnt.split(':'); draft.counts[k] = Math.max(0, draft.counts[k] + Number(d)); draft.bucks = draft.bucks.slice(0, draft.counts.buck); return render(); }
     if (b.dataset.preset) { const [bk, doe, fawn] = b.dataset.preset.split(',').map(Number); draft.counts = { buck: bk, doe, fawn }; if (!bk) draft.bucks = []; return render(); }
-    if (b.dataset.buck) { const id = b.dataset.buck; draft.bucks = draft.bucks.includes(id) ? draft.bucks.filter((x) => x !== id) : [...draft.bucks, id].slice(-Math.max(1, draft.counts.buck)); return render(); }
+    if (b.dataset.buck) {
+      const id = b.dataset.buck;
+      draft.bucks = draft.bucks.includes(id) ? draft.bucks.filter((x) => x !== id) : [...draft.bucks, id];
+      draft.counts.buck = Math.max(draft.counts.buck, draft.bucks.length); // two bucks picked = at least two bucks
+      return render();
+    }
     if (b.hasAttribute('data-nobuck')) { draft.bucks = []; return render(); }
     if (b.hasAttribute('data-newbuck')) {
       const name = (prompt('Name this buck (e.g. Big 8, Drop Tine):') || '').trim();
       if (!name) return;
       const v = visit();
       const nb = await db.put('bucks', { name, status: 'active', refs: [v.ids[photoIdx]] });
-      draft.bucks = [...draft.bucks, nb.id].slice(-Math.max(1, draft.counts.buck));
+      draft.bucks = [...draft.bucks, nb.id];
+      draft.counts.buck = Math.max(draft.counts.buck, draft.bucks.length);
       return render();
     }
   });

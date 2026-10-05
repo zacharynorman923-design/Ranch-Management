@@ -12,7 +12,7 @@ import { stationContext } from './weather.js';
 import { ranchPlace, coordsWarning } from '../place.js';
 import { sunTimes, ymd, addDays, today } from '../calc.js';
 import { photoTags } from '../photos.js';
-import { inDaylight } from '../deer.js';
+import { inDaylight, photoBucks } from '../deer.js';
 import { cachedForecast, refreshForecast } from '../forecast.js';
 
 const TONE = { excellent: 'good', good: 'good', fair: 'warn', poor: 'bad', closed: '', unsafe: 'bad' };
@@ -36,7 +36,7 @@ function context() {
     return act.get(key);
   };
   const weekAgo = addDays(today(), -7);
-  const buckDaylight = db.all('photos').filter((p) => p.buck && p.date >= weekAgo && inDaylight(p, pl.lat, pl.lon)).length;
+  const buckDaylight = db.all('photos').filter((p) => photoBucks(p).length && p.date >= weekAgo && inDaylight(p, pl.lat, pl.lon)).length;
   const sol = new Map();
   const solunar = (t) => { const d = ymd(new Date(t)); if (!sol.has(d)) sol.set(d, P.solunarDay(pl.lat, pl.lon, t)); return sol.get(d); };
   const extras = (key) => (t) => ({ activity: activity(key), solunar: solunar(t), buckDaylight });

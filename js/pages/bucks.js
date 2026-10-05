@@ -18,14 +18,14 @@ const thumb = (id, cls = 'buck-thumb', view = '') => (id ? `<img class="${cls}" 
 
 function patternFor(b) {
   const pl = ranchPlace();
-  return D.buckPattern(db.all('photos').filter((p) => p.buck === b.id), { lat: pl.lat, lon: pl.lon, today: new Date() });
+  return D.buckPattern(db.all('photos').filter((p) => D.hasBuck(p, b.id)), { lat: pl.lat, lon: pl.lon, today: new Date() });
 }
 
 function autoSortPanel() {
   const st = db.settings();
   const can = !!st.relayInfo?.sources?.buckSort;
   const unsorted = unsortedBuckPhotos();
-  const autoPhotos = db.all('photos').filter((p) => p.buck && p.buckAuto).sort(byTime);
+  const autoPhotos = db.all('photos').filter((p) => D.photoBucks(p).length && p.buckAuto).sort(byTime);
   const autoBucks = db.all('bucks').filter((b) => b.auto && (b.status || 'active') === 'active');
   const last = st.buckSortLast;
   if (!can && !unsorted.length && !autoPhotos.length) return '';
@@ -33,7 +33,7 @@ function autoSortPanel() {
     <div class="panel-head"><h2>🤖 Auto-sort</h2>${unsorted.length ? pill(`${unsorted.length} to sort`, 'warn') : pill('up to date', 'good')}</div>
     <p class="small">The AI looks at your buck photos together, groups the ones that are the same buck, files them under bucks you've named, and starts a new buck (named for his rack) for each one it hasn't seen. It runs on its own when the app syncs. Anything it files is marked 🤖 until you check it.</p>
     ${can ? `<div class="head-actions"><button class="btn primary" data-sort-now ${unsorted.length ? '' : 'disabled'}>${unsorted.length ? `Sort ${unsorted.length} photo${unsorted.length === 1 ? '' : 's'} now` : 'Nothing new to sort'}</button>
-      ${db.all('photos').some((p) => p.buckSortAt && !p.buck) ? '<button class="btn" data-sort-again>Try the unsure ones again</button>' : ''}</div>`
+      ${db.all('photos').some((p) => p.buckSortAt && !D.photoBucks(p).length) ? '<button class="btn" data-sort-again>Try the unsure ones again</button>' : ''}</div>`
       : '<p class="note warn">Auto-sort needs the relay updated: re-run <b>Deploy relay</b> in GitHub Actions, then sync.</p>'}
     ${last ? `<p class="small muted">Last run ${esc(new Date(last.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}: ${last.sorted} photo${last.sorted === 1 ? '' : 's'} looked at, ${last.filed} filed, ${last.newBucks} new buck${last.newBucks === 1 ? '' : 's'}, ${last.suggested} suggestion${last.suggested === 1 ? '' : 's'}.</p>` : ''}
     ${autoPhotos.length ? `<div class="auto-check"><b>${autoPhotos.length} auto-filed photo${autoPhotos.length === 1 ? '' : 's'}</b>${autoBucks.length ? ` · ${autoBucks.length} new buck${autoBucks.length === 1 ? '' : 's'}` : ''} to check
@@ -44,7 +44,7 @@ function autoSortPanel() {
 function reviewPanel() {
   const since = C.addDays(C.today(), -60);
   const bucks = new Map(db.all('bucks').map((b) => [b.id, b]));
-  const buckPhotos = db.all('photos').filter((p) => p.date >= since && !p.buck && photoTags(p).includes('buck')).sort(byTime);
+  const buckPhotos = db.all('photos').filter((p) => p.date >= since && !D.photoBucks(p).length && photoTags(p).includes('buck')).sort(byTime);
   const suggested = buckPhotos.filter((p) => bucks.has(p.buckAI?.match));
   const newOnes = buckPhotos.filter((p) => p.buckAI?.match === 'new');
   const rest = buckPhotos.filter((p) => !bucks.has(p.buckAI?.match) && p.buckAI?.match !== 'new');
@@ -74,7 +74,7 @@ function buckList() {
       return `<a class="card buck-card ${esc(b.status || 'active')}" href="#/bucks?id=${esc(b.id)}">
         <div class="buck-card-top">${thumb(ref)}<div class="grow"><b>${esc(b.name)}</b> ${(b.status || 'active') !== 'active' ? pill(b.status) : ''}${b.auto ? ` ${pill('🤖 auto · check', 'warn')}` : ''}
           <div class="small muted">${[b.points ? `${b.points} pts` : '', b.age ? `${b.age}+ yrs`.replace('.5+', '½') : '', b.marks].filter(Boolean).map(esc).join(' · ')}</div></div></div>
-        ${(() => { const n = db.all('photos').filter((p) => p.buck === b.id && p.buckAuto).length; return n ? `<div class="small">🤖 ${n} auto-filed photo${n === 1 ? '' : 's'} to check</div>` : ''; })()}
+        ${(() => { const n = db.all('photos').filter((p) => D.hasBuck(p, b.id) && p.buckAuto).length; return n ? `<div class="small">🤖 ${n} auto-filed photo${n === 1 ? '' : 's'} to check</div>` : ''; })()}
         <div class="small">${pt.sightings ? `${pt.sightings} sighting${pt.sightings === 1 ? '' : 's'} · last ${when(pt.last)} at ${esc(camName(pt.last.device))}` : 'No confirmed photos yet'}</div>
         ${pt.daylight != null ? `<div class="small">☀️ ${Math.round(pt.daylight * 100)}% in daylight${pt.recentDaylight ? ` · ${pill(`${pt.recentDaylight} daylight this week`, 'good')}` : ''}</div>` : ''}
       </a>`;
@@ -88,7 +88,7 @@ function buckList() {
 
 function buckDetail(b) {
   const pt = patternFor(b);
-  const photos = db.all('photos').filter((p) => p.buck === b.id).sort(byTime);
+  const photos = db.all('photos').filter((p) => D.hasBuck(p, b.id)).sort(byTime);
   const refs = buckRefIds(b);
   const max = Math.max(1, ...pt.hours);
   return `<section class="panel">
@@ -177,7 +177,7 @@ function censusPanel() {
         <div class="cres total"><span class="cres-label">Total deer</span><span class="cres-value">${c.est ? `~${n0(c.est.total)}` : '—'}</span><span class="cres-sub">${c.acresPerDeer ? `${n1(c.acresPerDeer)} acres per deer` : c.est ? 'set ranch acres in Settings for acres per deer' : 'needs an identified buck'}</span></div>
       </div>
       <div class="cres-ratios"><span>Does per buck <b>${c.doesPerBuck == null ? '—' : n1(c.doesPerBuck)}</b></span><span>Fawns per doe <b>${c.fawnsPerDoe == null ? '—' : n2(c.fawnsPerDoe)}</b></span></div>
-      ${named.size ? `<div class="chips census-chips">${[...named].map((id) => { const ids = photos.filter((p) => p.buck === id || p.review?.bucks?.includes(id)).map((p) => p.id); return `<button class="chip" data-cview-ids="${esc(ids.join(','))}">🦌 ${esc(db.get('bucks', id)?.name || 'Buck')} · ${ids.length}</button>`; }).join('')}
+      ${named.size ? `<div class="chips census-chips">${[...named].map((id) => { const ids = photos.filter((p) => D.hasBuck(p, id) || p.review?.bucks?.includes(id)).map((p) => p.id); return `<button class="chip" data-cview-ids="${esc(ids.join(','))}">🦌 ${esc(db.get('bucks', id)?.name || 'Buck')} · ${ids.length}</button>`; }).join('')}
         ${rc.unidentified ? `<button class="chip warn-chip" data-review="unidentified">❓ Unidentified · ${rc.unidentified}</button>` : ''}</div>`
         : rc.unidentified ? `<div class="chips census-chips"><button class="chip warn-chip" data-review="unidentified">❓ Unidentified bucks · ${rc.unidentified}</button></div>` : ''}
       ${warn.map((w) => `<p class="note warn">${esc(w)}</p>`).join('')}
@@ -227,14 +227,14 @@ export function bindBucks(el, rerender, params) {
     catch (err) { toast(`Couldn't sort: ${err.message}`); btn.disabled = false; }
   });
   el.querySelector('[data-sort-again]')?.addEventListener('click', async () => {
-    const ids = db.all('photos').filter((p) => p.buckSortAt && !p.buck);
+    const ids = db.all('photos').filter((p) => p.buckSortAt && !D.photoBucks(p).length);
     await db.putMany('photos', ids.map((p) => { const { buckSortAt, ...rest } = p; return rest; }));
     try { const r = await sortPendingBucks({ batches: 6 }); toast(`Sorted ${r?.sorted || 0} again: ${r?.filed || 0} filed`); } catch (err) { toast(`Couldn't sort: ${err.message}`); }
   });
   const curBuck = () => db.get('bucks', params.get('id'));
   el.querySelector('[data-keep]')?.addEventListener('click', async () => {
     const b = curBuck(); if (!b) return;
-    await db.putMany('photos', db.all('photos').filter((p) => p.buck === b.id && p.buckAuto).map((p) => ({ ...p, buckAuto: false })));
+    await db.putMany('photos', db.all('photos').filter((p) => D.hasBuck(p, b.id) && p.buckAuto).map((p) => ({ ...p, buckAuto: false })));
     await db.put('bucks', { ...b, auto: false });
     toast(`${b.name} confirmed`);
   });
@@ -246,7 +246,7 @@ export function bindBucks(el, rerender, params) {
   el.querySelector('[data-merge]')?.addEventListener('click', async () => {
     const b = curBuck(); const into = db.get('bucks', el.querySelector('[data-merge-into]')?.value);
     if (!b || !into || !confirm(`Move all of ${b.name}'s photos to ${into.name}?`)) return;
-    await db.putMany('photos', db.all('photos').filter((p) => p.buck === b.id || p.buckAI?.match === b.id).map((p) => ({ ...p, ...(p.buck === b.id ? { buck: into.id } : {}), ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}), ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}) })));
+    await db.putMany('photos', db.all('photos').filter((p) => D.hasBuck(p, b.id) || p.buckAI?.match === b.id).map((p) => ({ ...p, ...(D.hasBuck(p, b.id) ? D.withBucks(p, D.photoBucks(p).map((x) => (x === b.id ? into.id : x))) : {}), ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}), ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}) })));
     await db.put('bucks', { ...into, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3) });
     await db.del('bucks', b.id);
     location.hash = `#/bucks?id=${into.id}`;
@@ -255,8 +255,8 @@ export function bindBucks(el, rerender, params) {
   el.querySelector('[data-unsort]')?.addEventListener('click', async () => {
     const b = curBuck(); if (!b) return;
     if (!confirm(b.auto ? `Undo the ${b.name} group? Its photos go back to "still to identify".` : `Take the auto-filed photos back out of ${b.name}?`)) return;
-    await db.putMany('photos', db.all('photos').filter((p) => p.buck === b.id && (p.buckAuto || b.auto)).map((p) => ({ ...p, buck: '', buckAuto: false })));
-    if (b.auto && !db.all('photos').some((p) => p.buck === b.id)) { await db.del('bucks', b.id); location.hash = '#/bucks'; }
+    await db.putMany('photos', db.all('photos').filter((p) => D.hasBuck(p, b.id) && (p.buckAuto || b.auto)).map((p) => { const left = D.photoBucks(p).filter((x) => x !== b.id); return { ...D.withBucks(p, left), buckAuto: left.length ? p.buckAuto : false }; }));
+    if (b.auto && !db.all('photos').some((p) => D.hasBuck(p, b.id))) { await db.del('bucks', b.id); location.hash = '#/bucks'; }
     toast('Undone');
   });
   el.querySelector('[data-add-buck]')?.addEventListener('click', () => openForm('bucks', null, { status: 'active' }));

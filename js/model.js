@@ -6,7 +6,7 @@ import * as db from './db.js';
 import * as C from './calc.js';
 import { photoTags, needsReview } from './photos.js';
 import { ranchPlace } from './place.js';
-import { inDaylight } from './deer.js';
+import { inDaylight, hasBuck } from './deer.js';
 
 export const DEFAULTS = {
   ranchName: 'Mason County place',
@@ -109,7 +109,7 @@ export function alerts(asOf = C.today()) {
   const place = ranchPlace();
   const threeAgo = C.addDays(asOf, -3);
   for (const b of db.all('bucks').filter((x) => (x.status || 'active') === 'active')) {
-    const seen = db.all('photos').filter((p) => p.buck === b.id && p.date >= threeAgo && inDaylight(p, place.lat, place.lon)).sort((x, y) => (`${x.date} ${x.time}` < `${y.date} ${y.time}` ? 1 : -1));
+    const seen = db.all('photos').filter((p) => hasBuck(p, b.id) && p.date >= threeAgo && inDaylight(p, place.lat, place.lon)).sort((x, y) => (`${x.date} ${x.time}` < `${y.date} ${y.time}` ? 1 : -1));
     if (seen.length) push('info', `🦌 ${b.name} in daylight${seen.length > 1 ? ` ${seen.length} times` : ''}: last ${seen[0].date} ${seen[0].time} on ${db.get('devices', seen[0].device)?.name || 'a camera'}`, `#/bucks?id=${b.id}`, -20);
   }
   for (const d of db.all('devices')) {

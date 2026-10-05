@@ -124,3 +124,26 @@ test('auto-sort plan: file high matches, suggest medium, provisional bucks for n
   assert.deepEqual(plan.newBucks[0], { group: 'new1', name: 'Tall 10', rack: 'tall 10, long G2s', refId: 'p4', photoIds: ['p3', 'p4'] });
   assert.equal(plan.rack.p5, 'spike');
 });
+
+test('auto-sort plan: two bucks in one photo go to both', () => {
+  const plan = D.planBuckSort({
+    photos: [
+      { photo: 1, antlers_visible: true, bucks: [{ group: 'big8', rack: '8', confidence: 'high' }, { group: 'new1', rack: 'tall 10', confidence: 'high' }] },
+      { photo: 2, antlers_visible: true, bucks: [{ group: 'new1', rack: 'tall 10', confidence: 'medium' }] },
+    ],
+    new_bucks: [{ group: 'new1', name: 'Tall 10', rack: 'tall 10', best_photo: 2 }],
+  }, ['p1', 'p2'], ['big8']);
+  assert.deepEqual(plan.assign, [{ id: 'p1', buck: 'big8', confidence: 'high' }]);
+  assert.deepEqual(plan.newBucks[0].photoIds, ['p1', 'p2']);
+  assert.equal(plan.rack.p1, '8 + tall 10');
+  // Helpers
+  const p = D.withBucks({ id: 'x' }, ['big8', 'tall', 'big8']);
+  assert.deepEqual([p.buck, p.bucks], ['big8', ['big8', 'tall']]);
+  assert.deepEqual(D.photoBucks({ buck: 'a', bucks: ['b'] }), ['a', 'b']);
+  assert.ok(D.hasBuck({ buck: '', bucks: ['b'] }, 'b'));
+  // Census: 2 bucks counted but 1 named is still unidentified
+  const c = D.cameraCensus({ photos: [{ id: 'v1', aiCounts: { buck: 2 }, buck: 'big8' }], uniqueBucks: 1, days: 14 });
+  assert.equal(c.unidentified, 1);
+  const c2 = D.cameraCensus({ photos: [{ id: 'v1', aiCounts: { buck: 2 }, buck: 'big8', bucks: ['big8', 'tall'] }], uniqueBucks: 2, days: 14 });
+  assert.equal(c2.unidentified, 0);
+});

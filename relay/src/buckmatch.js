@@ -68,7 +68,7 @@ export async function matchBuck(env, body) {
 }
 
 const SORT_SYSTEM = `${SYSTEM}
-You may also be given several new photos at once. Sort them: put photos of the same buck in the same group. Use a named buck's id when the photo is that buck, a new group label ("new1", "new2", …) for a buck that isn't named yet (the same label for every photo of that same buck), or "unsure" when the rack can't be compared.
+You may also be given several new photos at once. Sort them: put photos of the same buck in the same group. A photo can show more than one buck: list each buck in it separately. Use a named buck's id when the photo is that buck, a new group label ("new1", "new2", …) for a buck that isn't named yet (the same label for every photo of that same buck), or "unsure" when the rack can't be compared.
 For each new group, suggest a short name from the most distinctive feature of the rack a hunter would use (e.g. "Split Brow 8", "Tall 10", "Drop Tine", "Wide 9", "Kicker 7"), and pick the photo that shows the rack best.`;
 
 /**
@@ -103,13 +103,24 @@ export async function sortBucks(env, body) {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['photo', 'antlers_visible', 'rack', 'group', 'confidence'],
+          required: ['photo', 'antlers_visible', 'bucks'],
           properties: {
             photo: { type: 'integer', description: 'Number of the new photo (1-based).' },
             antlers_visible: { type: 'boolean' },
-            rack: { type: 'string', description: 'The rack in a few words, e.g. "main-frame 8, split left brow, ~16 in".' },
-            group: { type: 'string', enum: groups },
-            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            bucks: {
+              type: 'array',
+              description: 'Every buck in this photo, one entry each (left to right).',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['rack', 'group', 'confidence'],
+                properties: {
+                  rack: { type: 'string', description: 'The rack in a few words, e.g. "main-frame 8, split left brow, ~16 in".' },
+                  group: { type: 'string', enum: groups },
+                  confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+                },
+              },
+            },
           },
         },
       },
@@ -154,6 +165,6 @@ export async function sortBucks(env, body) {
   if (res.stop_reason === 'refusal') throw Object.assign(new Error('The model declined to sort these photos'), { status: 422 });
   const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
   // No antlers to compare means no group, whatever the model said.
-  for (const p of out.photos || []) if (!p.antlers_visible && p.group !== 'unsure') { p.group = 'unsure'; p.confidence = 'low'; }
+  for (const p of out.photos || []) if (!p.antlers_visible) for (const b of p.bucks || []) { b.group = 'unsure'; b.confidence = 'low'; }
   return { model, result: out };
 }
