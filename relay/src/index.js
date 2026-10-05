@@ -15,6 +15,7 @@
      POST /run                    run every poll now (for setup/testing)
      POST /brush-scan             {image (base64 JPEG), view, note} → brush density estimate
      POST /buck-match             {image, bucks: [{id, name, refs: [base64]}]} → which named buck it is
+     POST /buck-sort              {photos: [base64], bucks} → group a batch of buck photos into named and new bucks
    ========================================================================= */
 import { safeEqual, fixRanchCoords } from './lib.js';
 import { kvGet, kvSet } from './store.js';
@@ -22,7 +23,7 @@ import { pollRain } from './rain.js';
 import { pollTactacam, prunePhotos } from './tactacam.js';
 import { classifyPending } from './classify.js';
 import { analyzeBrushPhoto } from './brushscan.js';
-import { matchBuck } from './buckmatch.js';
+import { matchBuck, sortBucks } from './buckmatch.js';
 import { pollAmbient, weatherFeed } from './weather.js';
 
 const CORS = {
@@ -80,6 +81,7 @@ export default {
           classifier: env.ANTHROPIC_API_KEY ? (env.CLASSIFIER_MODEL || 'claude-opus-5') : false,
           brushScan: env.ANTHROPIC_API_KEY ? (env.BRUSH_SCAN_MODEL || 'claude-opus-5') : false,
           buckMatch: env.ANTHROPIC_API_KEY ? (env.BUCK_MATCH_MODEL || 'claude-opus-5') : false,
+          buckSort: !!env.ANTHROPIC_API_KEY,
         },
         // Where the weather-model estimate is computed. 30.7488, -99.2303 is Mason town (the default).
         location: (() => {
@@ -126,6 +128,13 @@ export default {
       return new Response(body, { headers: { ...CORS, 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
     }
     if (p === '/run' && req.method === 'POST') return json(await runAll(env));
+    if (p === '/buck-sort' && req.method === 'POST') {
+      try {
+        return json(await sortBucks(env, await req.json()));
+      } catch (err) {
+        return json({ error: String(err.message || err) }, err.status || 502);
+      }
+    }
     if (p === '/buck-match' && req.method === 'POST') {
       try {
         return json(await matchBuck(env, await req.json()));
