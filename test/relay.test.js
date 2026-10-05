@@ -451,10 +451,10 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   const sent = [];
   const reply = {
     photos: [
-      { photo: 1, antlers_visible: true, rack: 'main-frame 8, split brow', group: 'b1', confidence: 'high' },
-      { photo: 2, antlers_visible: true, rack: 'tall 10', group: 'new1', confidence: 'high' },
-      { photo: 3, antlers_visible: true, rack: 'tall 10', group: 'new1', confidence: 'medium' },
-      { photo: 4, antlers_visible: false, rack: 'head down', group: 'new2', confidence: 'medium' },
+      { photo: 1, antlers_visible: true, bucks: [{ rack: 'main-frame 8, split brow', group: 'b1', confidence: 'high' }, { rack: 'tall 10', group: 'new1', confidence: 'high' }] },
+      { photo: 2, antlers_visible: true, bucks: [{ rack: 'tall 10', group: 'new1', confidence: 'high' }] },
+      { photo: 3, antlers_visible: true, bucks: [{ rack: 'tall 10', group: 'new1', confidence: 'medium' }] },
+      { photo: 4, antlers_visible: false, bucks: [{ rack: 'head down', group: 'new2', confidence: 'medium' }] },
     ],
     new_bucks: [{ group: 'new1', name: 'Tall 10', rack: 'tall 10, long G2s', best_photo: 2 }],
   };
@@ -471,11 +471,12 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   const r = await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [img, img, img, img], bucks: [{ id: 'b1', name: 'Big 8', refs: [img, img, img] }] }), headers: { 'Content-Type': 'application/json' } });
   assert.equal(r.status, 200);
   const out = (await r.json()).result;
-  assert.equal(out.photos[3].group, 'unsure');
+  assert.equal(out.photos[3].bucks[0].group, 'unsure');
+  assert.equal(out.photos[0].bucks.length, 2); // two bucks in one photo
   assert.equal(out.new_bucks[0].name, 'Tall 10');
   const body = sent[0];
   assert.equal(body.messages[0].content.filter((c) => c.type === 'image').length, 6); // 2 refs (capped) + 4 photos
-  assert.deepEqual(body.output_config.format.schema.properties.photos.items.properties.group.enum, ['b1', 'new1', 'new2', 'new3', 'new4', 'unsure']);
+  assert.deepEqual(body.output_config.format.schema.properties.photos.items.properties.bucks.items.properties.group.enum, ['b1', 'new1', 'new2', 'new3', 'new4', 'unsure']);
   assert.match(body.system, /Split Brow 8/);
   assert.equal((await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [] }) })).status, 400);
 });

@@ -13,6 +13,12 @@
    ========================================================================= */
 import { sunTimes } from './calc.js';
 
+/* A photo can show more than one named buck: \`buck\` is the first, \`bucks\` all of them. */
+export const photoBucks = (p) => [...new Set([p?.buck, ...(p?.bucks || [])].filter(Boolean))];
+export const hasBuck = (p, id) => photoBucks(p).includes(id);
+/** The photo with exactly these bucks. */
+export const withBucks = (p, ids) => { const u = [...new Set(ids.filter(Boolean))]; return { ...p, buck: u[0] || '', bucks: u }; };
+
 /** Deer in one classifier result: { buck, doe, fawn, deer (sex unknown) }. */
 export function deerCounts(labels) {
   const out = { buck: 0, doe: 0, fawn: 0, deer: 0 };
@@ -110,7 +116,7 @@ export function censusVisits(photos, gapMin = 5) {
     if (t != null) cur.last = t;
     const c = photoDeer(p);
     for (const k of Object.keys(cur.counts)) cur.counts[k] = Math.max(cur.counts[k], c[k] || 0);
-    if (p.buck) cur.bucks.add(p.buck);
+    for (const b of photoBucks(p)) cur.bucks.add(b);
   }
   // A visit you checked in census review keeps your counts and bucks, as long
   // as it's still the same set of photos (a different burst gap regroups them).
@@ -130,7 +136,7 @@ const reviewKey = (ids) => [...(ids || [])].sort().join('|');
 /** Named bucks seen in a set of photos, from tags on photos and checked visits. */
 export function censusBuckIds(photos) {
   const set = new Set();
-  for (const p of photos) { if (p.buck) set.add(p.buck); for (const b of p.review?.bucks || []) set.add(b); }
+  for (const p of photos) { for (const b of photoBucks(p)) set.add(b); for (const b of p.review?.bucks || []) set.add(b); }
   return set;
 }
 
@@ -148,8 +154,8 @@ export function cameraCensus({ photos, uniqueBucks, days, acres, gapMin = 0 }) {
   const visits = censusVisits(photos, gapMin);
   for (const v of visits) {
     for (const k of Object.keys(occ)) { occ[k] += v.counts[k]; if (v.counts[k]) photosFor[k].push(...v.ids); }
-    // A visit with a buck in it but no photo tied to a named buck.
-    if (v.counts.buck && !v.bucks.size) { unidentified++; photosFor.unidentified.push(...v.ids); }
+    // A visit with more bucks counted than named (none named, or 2 counted and 1 named).
+    if (v.counts.buck > v.bucks.size) { unidentified++; photosFor.unidentified.push(...v.ids); }
     for (const id of v.ids) visitOf[id] = v;
   }
   const corr = censusCorrection(days);
@@ -180,10 +186,16 @@ export function planBuckSort(result, photoIds, existingIds) {
   for (const p of result?.photos || []) {
     const id = photoIds[p.photo - 1];
     if (!id) continue;
-    if (p.rack) out.rack[id] = p.rack;
-    if (p.group === 'unsure' || p.confidence === 'low' || p.antlers_visible === false) continue;
-    if (known.has(p.group)) (p.confidence === 'high' ? out.assign : out.suggest).push({ id, buck: p.group, confidence: p.confidence });
-    else if (/^new\d+$/.test(p.group)) groups.set(p.group, [...(groups.get(p.group) || []), id]);
+    // Each buck in the photo (older replies had one group per photo).
+    const entries = Array.isArray(p.bucks) ? p.bucks : [{ group: p.group, rack: p.rack, confidence: p.confidence }];
+    const racks = entries.map((b) => b.rack).filter(Boolean);
+    if (racks.length) out.rack[id] = racks.join(' + ');
+    if (p.antlers_visible === false) continue;
+    for (const b of entries) {
+      if (b.group === 'unsure' || b.confidence === 'low') continue;
+      if (known.has(b.group)) (b.confidence === 'high' ? out.assign : out.suggest).push({ id, buck: b.group, confidence: b.confidence });
+      else if (/^new\d+$/.test(b.group)) groups.set(b.group, [...new Set([...(groups.get(b.group) || []), id])]);
+    }
   }
   for (const [group, ids] of groups) {
     const meta = (result.new_bucks || []).find((b) => b.group === group) || {};

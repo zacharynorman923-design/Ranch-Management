@@ -5,7 +5,7 @@
 import * as db from './db.js';
 import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
 import { relayPhotoBlob, relayConfigured, matchBuckPhoto } from './relay.js';
-import { cameraCensus, photoDeer } from './deer.js';
+import { cameraCensus, photoDeer, photoBucks, withBucks } from './deer.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
@@ -67,18 +67,19 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   // Which named buck is this? AI suggestion to confirm, or pick one yourself.
   const renderBuck = (p, eff) => {
     const box = $('[data-buck]');
-    const bucks = db.all('bucks').filter((b) => (b.status || 'active') === 'active' || b.id === p.buck).sort((a, b) => String(a.name).localeCompare(b.name));
-    if (!eff.includes('buck') && !p.buck) { box.hidden = true; return; }
+    const mineIds = photoBucks(p);
+    const bucks = db.all('bucks').filter((b) => (b.status || 'active') === 'active' || mineIds.includes(b.id)).sort((a, b) => String(a.name).localeCompare(b.name));
+    if (!eff.includes('buck') && !mineIds.length) { box.hidden = true; return; }
     box.hidden = false;
-    const mine = p.buck ? db.get('bucks', p.buck) : null;
+    const names = mineIds.map((id) => db.get('bucks', id)?.name || 'Buck');
     const ai = p.buckAI;
-    const aiBuck = ai && db.get('bucks', ai.match);
+    const aiBuck = ai && !mineIds.includes(ai.match) && db.get('bucks', ai.match);
     let line = '';
-    if (mine) {
-      const star = (mine.refs || []).includes(p.id);
-      line = p.buckAuto ? `🤖 Auto-sorted as <b>${esc(mine.name)}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}
-        <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, ${esc(mine.name)}</button><button type="button" class="v-tag" data-bk-clear>✕ Not him</button></div>`
-        : `🦌 <b>${esc(mine.name)}</b> ✓ <button type="button" class="v-link" data-bk-star>${star ? '★ reference photo' : '☆ use as reference'}</button> <button type="button" class="v-link" data-bk-clear>not him</button>`;
+    if (mineIds.length && p.buckAuto) {
+      line = `🤖 Auto-sorted as <b>${names.map(esc).join(' + ')}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}
+        <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, that's right</button><button type="button" class="v-tag" data-bk-clear>✕ Wrong, clear it</button></div>`;
+    } else if (mineIds.length) {
+      line = `🦌 In this photo: <b>${names.map(esc).join(' + ')}</b>`;
     } else if (aiBuck) {
       line = `🤖 Looks like <b>${esc(aiBuck.name)}</b> <small>(${esc(ai.confidence)})</small>${ai.reason ? `<br><small>${esc(ai.reason)}</small>` : ''}
         <div class="v-row"><button type="button" class="v-tag on" data-bk-yes>✓ Yes, ${esc(aiBuck.name)}</button><button type="button" class="v-tag" data-bk-no>✕ No</button></div>`;
@@ -89,10 +90,13 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     } else if (ai?.match === 'error') {
       line = `<small>Buck match failed: ${esc(ai.reason || '')}</small>`;
     }
+    // Every named buck is a toggle, so a photo with two bucks gets both.
     box.innerHTML = `${line ? `<div>${line}</div>` : ''}
-      ${mine ? '' : `<div class="v-row"><small>Which buck?</small>${bucks.map((b) => `<button type="button" class="v-tag" data-bk="${esc(b.id)}">${esc(b.name)}</button>`).join('')}
+      <div class="v-row"><small>${mineIds.length ? 'Bucks in this photo (tap to add or remove):' : 'Which buck? Tap each one in the photo:'}</small></div>
+      <div class="v-row">${bucks.map((b) => `<button type="button" class="v-tag ${mineIds.includes(b.id) ? 'on' : ''}" data-bk="${esc(b.id)}">${mineIds.includes(b.id) ? '✓ ' : ''}${esc(b.name)}</button>`).join('')}
         <button type="button" class="v-tag" data-bk-new>＋ New buck</button>
-        ${bucks.length && relayConfigured() ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>`}`;
+        ${bucks.length && relayConfigured() && !mineIds.length ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>
+      ${mineIds.length ? `<div class="v-row">${mineIds.map((id) => { const b = db.get('bucks', id); const star = (b?.refs || []).includes(p.id); return `<button type="button" class="v-link" data-bk-star="${esc(id)}">${star ? '★' : '☆'} reference for ${esc(b?.name || 'buck')}</button>`; }).join('')}</div>` : ''}`;
   };
 
   // Opened from the camera census: how this photo is counted, its visit, and fixable counts.
@@ -267,18 +271,21 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       const p = db.get('photos', ids[i]);
       if (!p) return;
       const tagged = (x) => (photoTags(x).includes('buck') ? x : { ...x, tags: [...photoTags(x).filter((t) => t !== 'empty'), 'buck'].join(', ') });
-      if (bk.dataset.bk) await db.put('photos', tagged({ ...p, buck: bk.dataset.bk, buckAuto: false }));
-      else if (bk.hasAttribute('data-bk-ok')) await db.put('photos', { ...p, buckAuto: false });
-      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...p, buck: p.buckAI.match, buckAuto: false }));
+      const cur = photoBucks(p);
+      if (bk.dataset.bk) {
+        const id = bk.dataset.bk;
+        await db.put('photos', tagged({ ...withBucks(p, cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]), buckAuto: false }));
+      } else if (bk.hasAttribute('data-bk-ok')) await db.put('photos', { ...p, buckAuto: false });
+      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...withBucks(p, [...cur, p.buckAI.match]), buckAuto: false }));
       else if (bk.hasAttribute('data-bk-no')) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
-      else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...p, buck: '', buckAuto: false });
+      else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...withBucks(p, []), buckAuto: false });
       else if (bk.hasAttribute('data-bk-new')) {
         const name = (prompt('Name this buck (e.g. Big 8, Drop Tine):') || '').trim();
         if (!name) return;
         const b = await db.put('bucks', { name, status: 'active', refs: [p.id], points: p.buckAI?.rack?.match(/\b(\d{1,2})\b/)?.[1] || '' });
-        await db.put('photos', tagged({ ...p, buck: b.id }));
-      } else if (bk.hasAttribute('data-bk-star')) {
-        const b = db.get('bucks', p.buck);
+        await db.put('photos', tagged({ ...withBucks(p, [...cur, b.id]), buckAuto: false }));
+      } else if (bk.dataset.bkStar) {
+        const b = db.get('bucks', bk.dataset.bkStar);
         if (b) {
           const refs = b.refs || [];
           await db.put('bucks', { ...b, refs: refs.includes(p.id) ? refs.filter((x) => x !== p.id) : [p.id, ...refs].slice(0, 3) });

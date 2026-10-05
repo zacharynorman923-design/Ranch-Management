@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage } from './photos.js';
-import { deerCounts, planBuckSort } from './deer.js';
+import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -225,7 +225,7 @@ const MAX_BUCKS_SENT = 8, REFS_PER_BUCK = 3, MATCH_PER_SYNC = 8;
 /** Reference photos for a buck: the ones you starred, else his newest confirmed photos. */
 export function buckRefIds(b) {
   if (b.refs?.length) return b.refs.filter((id) => db.get('photos', id)).slice(0, REFS_PER_BUCK);
-  return db.all('photos').filter((p) => p.buck === b.id).sort((x, y) => (`${x.date} ${x.time || ''}` < `${y.date} ${y.time || ''}` ? 1 : -1)).slice(0, REFS_PER_BUCK).map((p) => p.id);
+  return db.all('photos').filter((p) => hasBuck(p, b.id)).sort((x, y) => (`${x.date} ${x.time || ''}` < `${y.date} ${y.time || ''}` ? 1 : -1)).slice(0, REFS_PER_BUCK).map((p) => p.id);
 }
 async function buckRoster(perBuck = REFS_PER_BUCK) {
   const out = [];
@@ -259,7 +259,7 @@ const SORT_BATCH = 10;
 /** Buck photos nobody has sorted yet (newest first). */
 export function unsortedBuckPhotos({ all = false } = {}) {
   const since = C.addDays(C.today(), -60);
-  return db.all('photos').filter((p) => !p.buck && (all || !p.buckSortAt) && p.date >= since && photoTags(p).includes('buck'))
+  return db.all('photos').filter((p) => !photoBucks(p).length && (all || !p.buckSortAt) && p.date >= since && photoTags(p).includes('buck'))
     .sort((a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1));
 }
 /**
@@ -299,11 +299,10 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
     const writes = ids.map((id) => {
       const p = db.get('photos', id);
       const w = { ...p, buckSortAt: now, ...(plan.rack[id] ? { buckRack: plan.rack[id] } : {}) };
-      const a = plan.assign.find((x) => x.id === id);
+      // Every buck the AI found in this photo: named ones and new groups.
+      const found = [...plan.assign.filter((x) => x.id === id).map((x) => x.buck), ...plan.newBucks.filter((x) => x.photoIds.includes(id)).map((x) => newId[x.group])];
       const sgt = plan.suggest.find((x) => x.id === id);
-      const nb = plan.newBucks.find((x) => x.photoIds.includes(id));
-      if (a) { w.buck = a.buck; w.buckAuto = true; out.filed++; }
-      else if (nb) { w.buck = newId[nb.group]; w.buckAuto = true; out.filed++; }
+      if (found.length) { Object.assign(w, withBucks(w, [...photoBucks(w), ...found])); w.buckAuto = true; out.filed++; }
       else if (sgt) { w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', at: now }; out.suggested++; }
       return w;
     });
@@ -318,7 +317,7 @@ async function matchPendingBucks() {
   if (db.settings().relayInfo?.sources?.buckSort) return sortPendingBucks();
   if (!db.settings().relayInfo?.sources?.buckMatch) return 0;
   const since = C.addDays(C.today(), -30);
-  const todo = db.all('photos').filter((p) => !p.buck && !p.buckAI && p.date >= since && photoTags(p).includes('buck'))
+  const todo = db.all('photos').filter((p) => !photoBucks(p).length && !p.buckAI && p.date >= since && photoTags(p).includes('buck'))
     .sort((a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1)).slice(0, MATCH_PER_SYNC);
   if (!todo.length) return 0;
   const roster = await buckRoster();
