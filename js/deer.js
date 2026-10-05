@@ -165,3 +165,30 @@ export function cameraCensus({ photos, uniqueBucks, days, acres, gapMin = 0 }) {
     acresPerDeer: est?.total && acres ? acres / est.total : null,
   };
 }
+
+/**
+ * Turn an auto-sort result into actions. photoIds[i] is new photo i+1.
+ *  - a named buck at high confidence: file it under him (marked auto, for you to confirm)
+ *  - a named buck at medium: a suggestion only
+ *  - a new group: a provisional buck holding its high/medium photos
+ *  - low confidence or "unsure": left alone
+ */
+export function planBuckSort(result, photoIds, existingIds) {
+  const known = new Set(existingIds);
+  const out = { assign: [], suggest: [], newBucks: [], rack: {} };
+  const groups = new Map();
+  for (const p of result?.photos || []) {
+    const id = photoIds[p.photo - 1];
+    if (!id) continue;
+    if (p.rack) out.rack[id] = p.rack;
+    if (p.group === 'unsure' || p.confidence === 'low' || p.antlers_visible === false) continue;
+    if (known.has(p.group)) (p.confidence === 'high' ? out.assign : out.suggest).push({ id, buck: p.group, confidence: p.confidence });
+    else if (/^new\d+$/.test(p.group)) groups.set(p.group, [...(groups.get(p.group) || []), id]);
+  }
+  for (const [group, ids] of groups) {
+    const meta = (result.new_bucks || []).find((b) => b.group === group) || {};
+    const best = photoIds[(meta.best_photo || 0) - 1];
+    out.newBucks.push({ group, name: String(meta.name || '').trim() || `Buck ${out.newBucks.length + 1}`, rack: meta.rack || out.rack[ids[0]] || '', refId: ids.includes(best) ? best : ids[0], photoIds: ids });
+  }
+  return out;
+}

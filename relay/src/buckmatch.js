@@ -66,3 +66,94 @@ export async function matchBuck(env, body) {
   if (!out.antlers_visible && out.match !== 'unsure') { out.match = 'unsure'; out.confidence = 'low'; }
   return { model, result: out };
 }
+
+const SORT_SYSTEM = `${SYSTEM}
+You may also be given several new photos at once. Sort them: put photos of the same buck in the same group. Use a named buck's id when the photo is that buck, a new group label ("new1", "new2", …) for a buck that isn't named yet (the same label for every photo of that same buck), or "unsure" when the rack can't be compared.
+For each new group, suggest a short name from the most distinctive feature of the rack a hunter would use (e.g. "Split Brow 8", "Tall 10", "Drop Tine", "Wide 9", "Kicker 7"), and pick the photo that shows the rack best.`;
+
+/**
+ * Sort a batch of unidentified buck photos into named bucks and new groups.
+ * body: { photos: [base64…] (≤12), bucks: [{ id, name, refs: [base64…] }] }
+ */
+export async function sortBucks(env, body) {
+  if (!env.ANTHROPIC_API_KEY) throw Object.assign(new Error('Buck sorting needs an ANTHROPIC_API_KEY on the relay'), { status: 400 });
+  const strip = (x) => String(x || '').replace(/^data:image\/\w+;base64,/, '');
+  const photos = (Array.isArray(body?.photos) ? body.photos : []).map(strip).filter((x) => x.length >= 1000).slice(0, 12);
+  if (!photos.length) throw Object.assign(new Error('No photos received'), { status: 400 });
+  const bucks = (Array.isArray(body?.bucks) ? body.bucks : [])
+    .map((b) => ({ id: String(b.id || '').slice(0, 40), name: String(b.name || 'Buck').slice(0, 40), refs: (b.refs || []).map(strip).filter((r) => r.length >= 1000).slice(0, 2) }))
+    .filter((b) => b.id && b.refs.length).slice(0, 8);
+
+  const tz = env.RANCH_TZ || 'America/Chicago';
+  const today = localDate(Date.now(), tz);
+  const limit = Number(env.BUCK_MATCH_DAILY_LIMIT || 80);
+  const day = (await kvGet(env, 'buck_day')) || {};
+  const used = day.date === today ? day.n : 0;
+  if (used >= limit) throw Object.assign(new Error(`Daily buck-matching limit reached (${limit}). It picks up again tomorrow.`), { status: 429 });
+  await kvSet(env, 'buck_day', { date: today, n: used + 1 });
+
+  const groups = [...bucks.map((b) => b.id), ...photos.map((_, i) => `new${i + 1}`), 'unsure'];
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['photos', 'new_bucks'],
+    properties: {
+      photos: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['photo', 'antlers_visible', 'rack', 'group', 'confidence'],
+          properties: {
+            photo: { type: 'integer', description: 'Number of the new photo (1-based).' },
+            antlers_visible: { type: 'boolean' },
+            rack: { type: 'string', description: 'The rack in a few words, e.g. "main-frame 8, split left brow, ~16 in".' },
+            group: { type: 'string', enum: groups },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          },
+        },
+      },
+      new_bucks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['group', 'name', 'rack', 'best_photo'],
+          properties: {
+            group: { type: 'string', enum: groups.filter((g) => g.startsWith('new')) },
+            name: { type: 'string', description: 'Short name from the rack, e.g. "Split Brow 8".' },
+            rack: { type: 'string' },
+            best_photo: { type: 'integer', description: 'Number of the new photo that shows this rack best.' },
+          },
+        },
+      },
+    },
+  };
+  const content = [];
+  if (bucks.length) {
+    content.push({ type: 'text', text: `Named bucks (${bucks.length}), with reference photos:` });
+    for (const b of bucks) {
+      content.push({ type: 'text', text: `Buck id "${b.id}", named "${b.name}":` });
+      for (const r of b.refs) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r } });
+    }
+  } else content.push({ type: 'text', text: 'No bucks are named yet.' });
+  content.push({ type: 'text', text: `New photos to sort (${photos.length}):` });
+  photos.forEach((ph, i) => {
+    content.push({ type: 'text', text: `New photo ${i + 1}${body.notes?.[i] ? ` (${String(body.notes[i]).slice(0, 80)})` : ''}:` });
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: ph } });
+  });
+  content.push({ type: 'text', text: 'Sort every new photo into a named buck, a new group, or "unsure". Give each new group a name and its best photo.' });
+
+  const model = env.BUCK_MATCH_MODEL || 'claude-opus-5';
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 120_000, maxRetries: 1 });
+  const res = await client.beta.messages.create({
+    model, max_tokens: 6000, system: SORT_SYSTEM,
+    messages: [{ role: 'user', content }],
+    ...modelOptions(model, schema, 'medium'),
+  });
+  if (res.stop_reason === 'refusal') throw Object.assign(new Error('The model declined to sort these photos'), { status: 422 });
+  const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  // No antlers to compare means no group, whatever the model said.
+  for (const p of out.photos || []) if (!p.antlers_visible && p.group !== 'unsure') { p.group = 'unsure'; p.confidence = 'low'; }
+  return { model, result: out };
+}

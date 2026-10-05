@@ -107,7 +107,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -445,4 +445,37 @@ test('buck-match: sends refs per named buck plus the new photo, ids in the schem
   assert.equal((await post({ image: img, bucks })).status, 200);
   assert.equal((await post({ image: img, bucks })).status, 429);
   assert.equal((await post({ image: img, bucks: [{ id: 'x', name: 'x', refs: [] }] })).status, 400);
+});
+
+test('buck-sort: groups a batch into named and new bucks; no antlers means unsure', { timeout: 30000 }, async (t) => {
+  const sent = [];
+  const reply = {
+    photos: [
+      { photo: 1, antlers_visible: true, rack: 'main-frame 8, split brow', group: 'b1', confidence: 'high' },
+      { photo: 2, antlers_visible: true, rack: 'tall 10', group: 'new1', confidence: 'high' },
+      { photo: 3, antlers_visible: true, rack: 'tall 10', group: 'new1', confidence: 'medium' },
+      { photo: 4, antlers_visible: false, rack: 'head down', group: 'new2', confidence: 'medium' },
+    ],
+    new_bucks: [{ group: 'new1', name: 'Tall 10', rack: 'tall 10, long G2s', best_photo: 2 }],
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const req = url instanceof Request ? url : new Request(String(url), opts);
+    sent.push(JSON.parse(await req.text()));
+    return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify(reply) }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k' };
+  const img = 'data:image/jpeg;base64,' + 'C'.repeat(2000);
+  const r = await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [img, img, img, img], bucks: [{ id: 'b1', name: 'Big 8', refs: [img, img, img] }] }), headers: { 'Content-Type': 'application/json' } });
+  assert.equal(r.status, 200);
+  const out = (await r.json()).result;
+  assert.equal(out.photos[3].group, 'unsure');
+  assert.equal(out.new_bucks[0].name, 'Tall 10');
+  const body = sent[0];
+  assert.equal(body.messages[0].content.filter((c) => c.type === 'image').length, 6); // 2 refs (capped) + 4 photos
+  assert.deepEqual(body.output_config.format.schema.properties.photos.items.properties.group.enum, ['b1', 'new1', 'new2', 'new3', 'new4', 'unsure']);
+  assert.match(body.system, /Split Brow 8/);
+  assert.equal((await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [] }) })).status, 400);
 });

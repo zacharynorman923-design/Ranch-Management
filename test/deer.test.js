@@ -104,3 +104,23 @@ test('census review: a checked visit keeps your counts and bucks until it regrou
   assert.ok(split.every((x) => !x.reviewed));
   assert.equal(split.find((x) => x.ids[0] === 'a1').counts.doe, 3);
 });
+
+test('auto-sort plan: file high matches, suggest medium, provisional bucks for new groups', () => {
+  const result = {
+    photos: [
+      { photo: 1, antlers_visible: true, rack: '8 pts', group: 'big8', confidence: 'high' },
+      { photo: 2, antlers_visible: true, rack: '8 pts?', group: 'big8', confidence: 'medium' },
+      { photo: 3, antlers_visible: true, rack: 'tall 10', group: 'new1', confidence: 'high' },
+      { photo: 4, antlers_visible: true, rack: 'tall 10', group: 'new1', confidence: 'medium' },
+      { photo: 5, antlers_visible: true, rack: 'spike', group: 'new2', confidence: 'low' },
+      { photo: 6, antlers_visible: false, rack: '', group: 'unsure', confidence: 'low' },
+    ],
+    new_bucks: [{ group: 'new1', name: 'Tall 10', rack: 'tall 10, long G2s', best_photo: 4 }, { group: 'new2', name: 'Spike', rack: 'spike', best_photo: 5 }],
+  };
+  const plan = D.planBuckSort(result, ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'], ['big8']);
+  assert.deepEqual(plan.assign, [{ id: 'p1', buck: 'big8', confidence: 'high' }]);
+  assert.deepEqual(plan.suggest, [{ id: 'p2', buck: 'big8', confidence: 'medium' }]);
+  assert.equal(plan.newBucks.length, 1); // the low-confidence spike doesn't become a buck
+  assert.deepEqual(plan.newBucks[0], { group: 'new1', name: 'Tall 10', rack: 'tall 10, long G2s', refId: 'p4', photoIds: ['p3', 'p4'] });
+  assert.equal(plan.rack.p5, 'spike');
+});

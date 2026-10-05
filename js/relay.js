@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage } from './photos.js';
-import { deerCounts } from './deer.js';
+import { deerCounts, planBuckSort } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -227,11 +227,11 @@ export function buckRefIds(b) {
   if (b.refs?.length) return b.refs.filter((id) => db.get('photos', id)).slice(0, REFS_PER_BUCK);
   return db.all('photos').filter((p) => p.buck === b.id).sort((x, y) => (`${x.date} ${x.time || ''}` < `${y.date} ${y.time || ''}` ? 1 : -1)).slice(0, REFS_PER_BUCK).map((p) => p.id);
 }
-async function buckRoster() {
+async function buckRoster(perBuck = REFS_PER_BUCK) {
   const out = [];
   for (const b of db.all('bucks').filter((x) => (x.status || 'active') === 'active')) {
     const refs = [];
-    for (const id of buckRefIds(b)) { const u = await photoURL(id); if (u) refs.push(await shrinkImage(u, 640)); }
+    for (const id of buckRefIds(b).slice(0, perBuck)) { const u = await photoURL(id); if (u) refs.push(await shrinkImage(u, 640)); }
     if (refs.length) out.push({ id: b.id, name: b.name, refs });
     if (out.length >= MAX_BUCKS_SENT) break;
   }
@@ -254,7 +254,68 @@ export async function matchBuckPhoto(id, roster = null) {
     return db.put('photos', { ...db.get('photos', id), buckAI: { match: 'error', reason: err.message, at: new Date().toISOString() } });
   }
 }
+/* ----------------------------- auto-sort bucks ---------------------------- */
+const SORT_BATCH = 10;
+/** Buck photos nobody has sorted yet (newest first). */
+export function unsortedBuckPhotos({ all = false } = {}) {
+  const since = C.addDays(C.today(), -60);
+  return db.all('photos').filter((p) => !p.buck && (all || !p.buckSortAt) && p.date >= since && photoTags(p).includes('buck'))
+    .sort((a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1));
+}
+/**
+ * Let the AI sort unidentified buck photos: it groups them by individual buck,
+ * files them under bucks you've named, and makes provisional bucks (named for
+ * their racks) for the rest. Everything it files is marked auto until you confirm.
+ */
+export async function sortPendingBucks({ batches = 2, all = false } = {}) {
+  if (!db.settings().relayInfo?.sources?.buckSort) return null;
+  const out = { sorted: 0, filed: 0, suggested: 0, newBucks: 0 };
+  for (let k = 0; k < batches; k++) {
+    const todo = unsortedBuckPhotos({ all: all && k === 0 }).slice(0, SORT_BATCH);
+    if (!todo.length) break;
+    const roster = await buckRoster(2); // rebuilt each batch, so a buck found in batch 1 can collect more in batch 2
+    const photos = [], ids = [], notes = [];
+    for (const p of todo) {
+      const u = await photoURL(p.id);
+      if (!u) continue;
+      photos.push(await shrinkImage(u, 900)); ids.push(p.id);
+      notes.push([db.get('devices', p.device)?.name, p.date, p.time].filter(Boolean).join(' '));
+    }
+    if (!photos.length) break;
+    let r;
+    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes } }); } catch (err) { if (err.status === 429 || err instanceof TypeError) break; throw err; }
+    const plan = planBuckSort(r.result, ids, roster.map((b) => b.id));
+    const now = new Date().toISOString();
+    const names = new Set(db.all('bucks').map((b) => String(b.name).toLowerCase()));
+    const newId = {};
+    for (const nb of plan.newBucks) {
+      let name = nb.name, n = 2;
+      while (names.has(name.toLowerCase())) name = `${nb.name} ${n++}`;
+      names.add(name.toLowerCase());
+      const b = await db.put('bucks', { name, status: 'active', auto: true, marks: nb.rack, refs: [nb.refId], created: now });
+      newId[nb.group] = b.id;
+      out.newBucks++;
+    }
+    const writes = ids.map((id) => {
+      const p = db.get('photos', id);
+      const w = { ...p, buckSortAt: now, ...(plan.rack[id] ? { buckRack: plan.rack[id] } : {}) };
+      const a = plan.assign.find((x) => x.id === id);
+      const sgt = plan.suggest.find((x) => x.id === id);
+      const nb = plan.newBucks.find((x) => x.photoIds.includes(id));
+      if (a) { w.buck = a.buck; w.buckAuto = true; out.filed++; }
+      else if (nb) { w.buck = newId[nb.group]; w.buckAuto = true; out.filed++; }
+      else if (sgt) { w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', at: now }; out.suggested++; }
+      return w;
+    });
+    await db.putMany('photos', writes);
+    out.sorted += ids.length;
+  }
+  await db.saveSettings({ buckSortLast: { ...out, at: new Date().toISOString() } });
+  return out;
+}
+
 async function matchPendingBucks() {
+  if (db.settings().relayInfo?.sources?.buckSort) return sortPendingBucks();
   if (!db.settings().relayInfo?.sources?.buckMatch) return 0;
   const since = C.addDays(C.today(), -30);
   const todo = db.all('photos').filter((p) => !p.buck && !p.buckAI && p.date >= since && photoTags(p).includes('buck'))

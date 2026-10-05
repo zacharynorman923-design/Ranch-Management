@@ -5,7 +5,7 @@ import * as C from '../calc.js';
 import * as D from '../deer.js';
 import { esc, n0, n1, n2, stat, pill, listPanel, dateLabel, openForm, toast } from '../ui.js';
 import { photoURL, photoTags } from '../photos.js';
-import { buckRefIds } from '../relay.js';
+import { buckRefIds, sortPendingBucks, unsortedBuckPhotos } from '../relay.js';
 import { openViewer } from '../viewer.js';
 import { ranchPlace } from '../place.js';
 import { censusNow, reviewCounts, openCensusReview } from '../censusreview.js';
@@ -21,6 +21,26 @@ function patternFor(b) {
   return D.buckPattern(db.all('photos').filter((p) => p.buck === b.id), { lat: pl.lat, lon: pl.lon, today: new Date() });
 }
 
+function autoSortPanel() {
+  const st = db.settings();
+  const can = !!st.relayInfo?.sources?.buckSort;
+  const unsorted = unsortedBuckPhotos();
+  const autoPhotos = db.all('photos').filter((p) => p.buck && p.buckAuto).sort(byTime);
+  const autoBucks = db.all('bucks').filter((b) => b.auto && (b.status || 'active') === 'active');
+  const last = st.buckSortLast;
+  if (!can && !unsorted.length && !autoPhotos.length) return '';
+  return `<section class="panel auto-sort">
+    <div class="panel-head"><h2>🤖 Auto-sort</h2>${unsorted.length ? pill(`${unsorted.length} to sort`, 'warn') : pill('up to date', 'good')}</div>
+    <p class="small">The AI looks at your buck photos together, groups the ones that are the same buck, files them under bucks you've named, and starts a new buck (named for his rack) for each one it hasn't seen. It runs on its own when the app syncs. Anything it files is marked 🤖 until you check it.</p>
+    ${can ? `<div class="head-actions"><button class="btn primary" data-sort-now ${unsorted.length ? '' : 'disabled'}>${unsorted.length ? `Sort ${unsorted.length} photo${unsorted.length === 1 ? '' : 's'} now` : 'Nothing new to sort'}</button>
+      ${db.all('photos').some((p) => p.buckSortAt && !p.buck) ? '<button class="btn" data-sort-again>Try the unsure ones again</button>' : ''}</div>`
+      : '<p class="note warn">Auto-sort needs the relay updated: re-run <b>Deploy relay</b> in GitHub Actions, then sync.</p>'}
+    ${last ? `<p class="small muted">Last run ${esc(new Date(last.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}: ${last.sorted} photo${last.sorted === 1 ? '' : 's'} looked at, ${last.filed} filed, ${last.newBucks} new buck${last.newBucks === 1 ? '' : 's'}, ${last.suggested} suggestion${last.suggested === 1 ? '' : 's'}.</p>` : ''}
+    ${autoPhotos.length ? `<div class="auto-check"><b>${autoPhotos.length} auto-filed photo${autoPhotos.length === 1 ? '' : 's'}</b>${autoBucks.length ? ` · ${autoBucks.length} new buck${autoBucks.length === 1 ? '' : 's'}` : ''} to check
+      <button class="btn sm primary" data-view="${esc(autoPhotos.map((p) => p.id).join(','))}">Check them</button></div>` : ''}
+  </section>`;
+}
+
 function reviewPanel() {
   const since = C.addDays(C.today(), -60);
   const bucks = new Map(db.all('bucks').map((b) => [b.id, b]));
@@ -30,7 +50,7 @@ function reviewPanel() {
   const rest = buckPhotos.filter((p) => !bucks.has(p.buckAI?.match) && p.buckAI?.match !== 'new');
   if (!buckPhotos.length) return '';
   return `<section class="panel">
-    <div class="panel-head"><h2>To identify</h2>${pill(`${buckPhotos.length} buck photo${buckPhotos.length === 1 ? '' : 's'}`, 'warn')}</div>
+    <div class="panel-head"><h2>Still to identify</h2>${pill(`${buckPhotos.length} buck photo${buckPhotos.length === 1 ? '' : 's'}`, 'warn')}</div>
     ${suggested.length ? `<ul class="plain buck-review">${suggested.slice(0, 20).map((p) => { const b = bucks.get(p.buckAI.match); return `<li>
       ${thumb(p.id, 'buck-thumb', suggested.map((x) => x.id).join(','))}
       <div class="grow"><b>${esc(b.name)}?</b> ${pill(p.buckAI.confidence, p.buckAI.confidence === 'high' ? 'good' : p.buckAI.confidence === 'low' ? 'bad' : 'warn')}
@@ -40,7 +60,7 @@ function reviewPanel() {
       ${newOnes.length ? `<button class="btn" data-view="${esc(newOnes.map((p) => p.id).join(','))}">🆕 ${newOnes.length} look like unnamed bucks</button>` : ''}
       ${rest.length ? `<button class="btn" data-view="${esc(rest.map((p) => p.id).join(','))}">🔍 Identify ${rest.length} more</button>` : ''}
     </div>
-    <p class="note">Open a photo and tap the buck's name, or <b>＋ New buck</b> to name him. The AI compares new buck photos with each named buck's reference photos when the app syncs. Confirm or reject its guesses here.</p>
+    <p class="note">These are the buck photos auto-sort couldn't place (rack not visible, or too close to call) or isn't sure about. Open one and tap the buck's name, or <b>＋ New buck</b>.</p>
   </section>`;
 }
 
@@ -52,13 +72,14 @@ function buckList() {
       const pt = patternFor(b);
       const ref = buckRefIds(b)[0];
       return `<a class="card buck-card ${esc(b.status || 'active')}" href="#/bucks?id=${esc(b.id)}">
-        <div class="buck-card-top">${thumb(ref)}<div class="grow"><b>${esc(b.name)}</b> ${(b.status || 'active') !== 'active' ? pill(b.status) : ''}
+        <div class="buck-card-top">${thumb(ref)}<div class="grow"><b>${esc(b.name)}</b> ${(b.status || 'active') !== 'active' ? pill(b.status) : ''}${b.auto ? ` ${pill('🤖 auto · check', 'warn')}` : ''}
           <div class="small muted">${[b.points ? `${b.points} pts` : '', b.age ? `${b.age}+ yrs`.replace('.5+', '½') : '', b.marks].filter(Boolean).map(esc).join(' · ')}</div></div></div>
+        ${(() => { const n = db.all('photos').filter((p) => p.buck === b.id && p.buckAuto).length; return n ? `<div class="small">🤖 ${n} auto-filed photo${n === 1 ? '' : 's'} to check</div>` : ''; })()}
         <div class="small">${pt.sightings ? `${pt.sightings} sighting${pt.sightings === 1 ? '' : 's'} · last ${when(pt.last)} at ${esc(camName(pt.last.device))}` : 'No confirmed photos yet'}</div>
         ${pt.daylight != null ? `<div class="small">☀️ ${Math.round(pt.daylight * 100)}% in daylight${pt.recentDaylight ? ` · ${pill(`${pt.recentDaylight} daylight this week`, 'good')}` : ''}</div>` : ''}
       </a>`;
     }).join('')}</div>` : `<p class="empty">No named bucks yet.</p>
-      <ol class="steps"><li>Open a good, clear buck photo (daylight or broadside is best) in the <a href="#/photos?tag=buck">Photo log</a>.</li>
+      <p class="small">Auto-sort will start bucks for you as buck photos come in. Or name one yourself:</p><ol class="steps"><li>Open a good, clear buck photo (daylight or broadside is best) in the <a href="#/photos?tag=buck">Photo log</a>.</li>
         <li>Tap <b>＋ New buck</b> and give him a name. That photo becomes his reference.</li>
         <li>Add 1–2 more photos of him from other angles with <b>☆ use as reference</b>.</li>
         <li>From then on, new buck photos are compared with your named bucks automatically.</li></ol>`}
@@ -75,6 +96,21 @@ function buckDetail(b) {
         <button class="btn sm" data-edit-buck="${esc(b.id)}">Edit</button></div>
       <p class="small"><a href="#/bucks">← All bucks</a></p>
       ${b.marks ? `<p>${esc(b.marks)}</p>` : ''}
+      ${(() => {
+        const autoIds = photos.filter((p) => p.buckAuto).map((p) => p.id);
+        if (!b.auto && !autoIds.length) return '';
+        const others = db.all('bucks').filter((x) => x.id !== b.id && (x.status || 'active') === 'active').sort((x, y) => String(x.name).localeCompare(y.name));
+        return `<div class="auto-banner">
+          <div>🤖 ${b.auto ? `The AI grouped these ${photos.length} photo${photos.length === 1 ? '' : 's'} as one new buck and named him for his rack.` : `${autoIds.length} photo${autoIds.length === 1 ? ' was' : 's were'} auto-filed under ${esc(b.name)}.`} Page through them to check it's the same buck.</div>
+          <div class="head-actions">
+            <button class="btn sm" data-view="${esc((autoIds.length ? autoIds : photos.map((p) => p.id)).join(','))}">Page through</button>
+            <button class="btn sm primary" data-keep>✓ Same buck, keep</button>
+            ${b.auto ? '<button class="btn sm" data-rename>Rename</button>' : ''}
+          </div>
+          ${others.length ? `<div class="merge-row"><select data-merge-into><option value="">Merge into…</option>${others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select><button class="btn sm" data-merge>Merge</button></div>` : ''}
+          <button class="btn sm link" data-unsort>${b.auto ? 'Not one buck: undo this group' : 'Undo the auto-filed photos'}</button>
+        </div>`;
+      })()}
       <div class="stats">
         ${stat('Sightings', n0(pt.sightings), `${pt.days} different day${pt.days === 1 ? '' : 's'}`)}
         ${stat('Last seen', pt.last ? dateLabel(pt.last.date) : '—', pt.last ? `${pt.last.time || ''} · ${camName(pt.last.device)}` : '')}
@@ -87,7 +123,7 @@ function buckDetail(b) {
       <p class="small muted">The AI compares new photos against these. Pick clear shots from different angles; star them in the viewer.</p>
       <div class="buck-gallery">${refs.map((id) => thumb(id, 'buck-photo', refs.join(','))).join('') || '<p class="empty">None yet.</p>'}</div>
       <h3>All sightings</h3>
-      <div class="buck-gallery">${photos.slice(0, 60).map((p) => `<figure>${thumb(p.id, 'buck-photo', photos.map((x) => x.id).join(','))}<figcaption class="small">${when(p)}<br>${esc(camName(p.device))}</figcaption></figure>`).join('')}</div>
+      <div class="buck-gallery">${photos.slice(0, 60).map((p) => `<figure class="${p.buckAuto ? 'is-auto' : ''}">${thumb(p.id, 'buck-photo', photos.map((x) => x.id).join(','))}<figcaption class="small">${p.buckAuto ? '🤖 ' : ''}${when(p)}<br>${esc(camName(p.device))}</figcaption></figure>`).join('')}</div>
       <div class="head-actions">
         ${(b.status || 'active') === 'active' ? `<button class="btn" data-status="harvested">Mark harvested</button><button class="btn" data-status="gone">Not seen anymore</button>` : '<button class="btn" data-status="active">Back to active</button>'}
       </div>
@@ -104,6 +140,8 @@ function censusPanel() {
   if (acres && cams && acres / cams > 160) warn.push(`${cams} camera${cams === 1 ? '' : 's'} on ${acres} ac: aim for about 1 per 100 acres.`);
   if (rc.unidentified) warn.push(`${rc.unidentified} buck visit${rc.unidentified === 1 ? ' has' : 's have'} no named buck, so the buck count may be low.`);
   if (!c.occ.buck) warn.push('No buck photos in this window.');
+  const autoInWindow = photos.filter((p) => p.buckAuto).length;
+  if (autoInWindow) warn.push(`${autoInWindow} buck photo${autoInWindow === 1 ? ' was' : 's were'} auto-sorted and not checked yet. The unique-buck count depends on them, so check them under Auto-sort.`);
   const res = (k, label, value, sub, filter) => `<button type="button" class="cres" data-review="${filter}" ${rc[filter] ? '' : 'disabled'}>
     <span class="cres-label">${label}</span><span class="cres-value">${value}</span><span class="cres-sub">${sub}</span>${rc[filter] ? '<span class="cres-go">See photos ›</span>' : ''}</button>`;
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -136,7 +174,7 @@ function censusPanel() {
         ${res('buck', 'Unique bucks', n0(named.size), `${plural(c.occ.buck, 'buck')} in ${plural(rc.buck, 'visit')}`, 'buck')}
         ${res('doe', 'Does', c.est ? `~${n0(c.est.does)}` : '—', `${plural(c.occ.doe, 'doe')} in ${plural(rc.doe, 'visit')}`, 'doe')}
         ${res('fawn', 'Fawns', c.est ? `~${n0(c.est.fawns)}` : '—', `${plural(c.occ.fawn, 'fawn')} in ${plural(rc.fawn, 'visit')}`, 'fawn')}
-        <div class="cres total"><span class="cres-label">Total deer</span><span class="cres-value">${c.est ? `~${n0(c.est.total)}` : '—'}</span><span class="cres-sub">${c.acresPerDeer ? `${n1(c.acresPerDeer)} acres per deer` : 'needs a named buck'}</span></div>
+        <div class="cres total"><span class="cres-label">Total deer</span><span class="cres-value">${c.est ? `~${n0(c.est.total)}` : '—'}</span><span class="cres-sub">${c.acresPerDeer ? `${n1(c.acresPerDeer)} acres per deer` : c.est ? 'set ranch acres in Settings for acres per deer' : 'needs an identified buck'}</span></div>
       </div>
       <div class="cres-ratios"><span>Does per buck <b>${c.doesPerBuck == null ? '—' : n1(c.doesPerBuck)}</b></span><span>Fawns per doe <b>${c.fawnsPerDoe == null ? '—' : n2(c.fawnsPerDoe)}</b></span></div>
       ${named.size ? `<div class="chips census-chips">${[...named].map((id) => { const ids = photos.filter((p) => p.buck === id || p.review?.bucks?.includes(id)).map((p) => p.id); return `<button class="chip" data-cview-ids="${esc(ids.join(','))}">🦌 ${esc(db.get('bucks', id)?.name || 'Buck')} · ${ids.length}</button>`; }).join('')}
@@ -165,7 +203,7 @@ export function bucks(params) {
   const id = params.get('id');
   const b = id ? db.get('bucks', id) : null;
   if (b) return buckDetail(b);
-  return `${reviewPanel()}${buckList()}${censusPanel()}`;
+  return `${autoSortPanel()}${buckList()}${reviewPanel()}${censusPanel()}`;
 }
 
 export function bindBucks(el, rerender, params) {
@@ -183,6 +221,44 @@ export function bindBucks(el, rerender, params) {
     const p = db.get('photos', x.dataset.no);
     if (p) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
   }));
+  el.querySelector('[data-sort-now]')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = '🤖 Sorting… (about a minute)';
+    try { const r = await sortPendingBucks({ batches: 6 }); toast(r ? `Sorted ${r.sorted}: ${r.filed} filed, ${r.newBucks} new buck${r.newBucks === 1 ? '' : 's'}` : 'Auto-sort isn\'t available yet'); }
+    catch (err) { toast(`Couldn't sort: ${err.message}`); btn.disabled = false; }
+  });
+  el.querySelector('[data-sort-again]')?.addEventListener('click', async () => {
+    const ids = db.all('photos').filter((p) => p.buckSortAt && !p.buck);
+    await db.putMany('photos', ids.map((p) => { const { buckSortAt, ...rest } = p; return rest; }));
+    try { const r = await sortPendingBucks({ batches: 6 }); toast(`Sorted ${r?.sorted || 0} again: ${r?.filed || 0} filed`); } catch (err) { toast(`Couldn't sort: ${err.message}`); }
+  });
+  const curBuck = () => db.get('bucks', params.get('id'));
+  el.querySelector('[data-keep]')?.addEventListener('click', async () => {
+    const b = curBuck(); if (!b) return;
+    await db.putMany('photos', db.all('photos').filter((p) => p.buck === b.id && p.buckAuto).map((p) => ({ ...p, buckAuto: false })));
+    await db.put('bucks', { ...b, auto: false });
+    toast(`${b.name} confirmed`);
+  });
+  el.querySelector('[data-rename]')?.addEventListener('click', async () => {
+    const b = curBuck(); if (!b) return;
+    const name = (prompt('Name for this buck:', b.name) || '').trim();
+    if (name) await db.put('bucks', { ...b, name });
+  });
+  el.querySelector('[data-merge]')?.addEventListener('click', async () => {
+    const b = curBuck(); const into = db.get('bucks', el.querySelector('[data-merge-into]')?.value);
+    if (!b || !into || !confirm(`Move all of ${b.name}'s photos to ${into.name}?`)) return;
+    await db.putMany('photos', db.all('photos').filter((p) => p.buck === b.id || p.buckAI?.match === b.id).map((p) => ({ ...p, ...(p.buck === b.id ? { buck: into.id } : {}), ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}), ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}) })));
+    await db.put('bucks', { ...into, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3) });
+    await db.del('bucks', b.id);
+    location.hash = `#/bucks?id=${into.id}`;
+    toast(`Merged into ${into.name}`);
+  });
+  el.querySelector('[data-unsort]')?.addEventListener('click', async () => {
+    const b = curBuck(); if (!b) return;
+    if (!confirm(b.auto ? `Undo the ${b.name} group? Its photos go back to "still to identify".` : `Take the auto-filed photos back out of ${b.name}?`)) return;
+    await db.putMany('photos', db.all('photos').filter((p) => p.buck === b.id && (p.buckAuto || b.auto)).map((p) => ({ ...p, buck: '', buckAuto: false })));
+    if (b.auto && !db.all('photos').some((p) => p.buck === b.id)) { await db.del('bucks', b.id); location.hash = '#/bucks'; }
+    toast('Undone');
+  });
   el.querySelector('[data-add-buck]')?.addEventListener('click', () => openForm('bucks', null, { status: 'active' }));
   el.querySelector('[data-edit-buck]')?.addEventListener('click', (e) => openForm('bucks', db.get('bucks', e.currentTarget.dataset.editBuck)));
   el.querySelectorAll('[data-status]').forEach((x) => x.addEventListener('click', async () => {

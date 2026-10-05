@@ -76,7 +76,9 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     let line = '';
     if (mine) {
       const star = (mine.refs || []).includes(p.id);
-      line = `🦌 <b>${esc(mine.name)}</b> ✓ <button type="button" class="v-link" data-bk-star>${star ? '★ reference photo' : '☆ use as reference'}</button> <button type="button" class="v-link" data-bk-clear>not him</button>`;
+      line = p.buckAuto ? `🤖 Auto-sorted as <b>${esc(mine.name)}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}
+        <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, ${esc(mine.name)}</button><button type="button" class="v-tag" data-bk-clear>✕ Not him</button></div>`
+        : `🦌 <b>${esc(mine.name)}</b> ✓ <button type="button" class="v-link" data-bk-star>${star ? '★ reference photo' : '☆ use as reference'}</button> <button type="button" class="v-link" data-bk-clear>not him</button>`;
     } else if (aiBuck) {
       line = `🤖 Looks like <b>${esc(aiBuck.name)}</b> <small>(${esc(ai.confidence)})</small>${ai.reason ? `<br><small>${esc(ai.reason)}</small>` : ''}
         <div class="v-row"><button type="button" class="v-tag on" data-bk-yes>✓ Yes, ${esc(aiBuck.name)}</button><button type="button" class="v-tag" data-bk-no>✕ No</button></div>`;
@@ -260,15 +262,16 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       renderInfo();
       return;
     }
-    const bk = e.target.closest('[data-bk],[data-bk-new],[data-bk-yes],[data-bk-no],[data-bk-clear],[data-bk-star],[data-bk-ask]');
+    const bk = e.target.closest('[data-bk],[data-bk-new],[data-bk-yes],[data-bk-no],[data-bk-clear],[data-bk-star],[data-bk-ask],[data-bk-ok]');
     if (bk) {
       const p = db.get('photos', ids[i]);
       if (!p) return;
       const tagged = (x) => (photoTags(x).includes('buck') ? x : { ...x, tags: [...photoTags(x).filter((t) => t !== 'empty'), 'buck'].join(', ') });
-      if (bk.dataset.bk) await db.put('photos', tagged({ ...p, buck: bk.dataset.bk }));
-      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...p, buck: p.buckAI.match }));
+      if (bk.dataset.bk) await db.put('photos', tagged({ ...p, buck: bk.dataset.bk, buckAuto: false }));
+      else if (bk.hasAttribute('data-bk-ok')) await db.put('photos', { ...p, buckAuto: false });
+      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...p, buck: p.buckAI.match, buckAuto: false }));
       else if (bk.hasAttribute('data-bk-no')) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
-      else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...p, buck: '' });
+      else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...p, buck: '', buckAuto: false });
       else if (bk.hasAttribute('data-bk-new')) {
         const name = (prompt('Name this buck (e.g. Big 8, Drop Tine):') || '').trim();
         if (!name) return;
