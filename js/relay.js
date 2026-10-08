@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage, imageSize } from './photos.js';
-import { deerCounts, planBuckSort, sortBatches, planVisitCarry, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
+import { deerCounts, planBuckSort, sortBatches, planVisitCarry, planTwinMerges, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -268,8 +268,17 @@ export function unsortedBuckPhotos({ all = false } = {}) {
  * files them under bucks you've named, and makes provisional bucks (named for
  * their racks) for the rest. Everything it files is marked auto until you confirm.
  */
-export async function sortPendingBucks({ batches = 2, all = false } = {}) {
-  if (!db.settings().relayInfo?.sources?.buckSort) return null;
+let sorting = null;
+export function sortPendingBucks(opts = {}) {
+  if (!db.settings().relayInfo?.sources?.buckSort) return Promise.resolve(null);
+  // One sort at a time: two at once would each send the same unsorted photos
+  // and each make its own new buck from them, so one picture ends up as two
+  // bucks. A second call (the 15-minute sync, a button, another tab) waits for
+  // the running one and gets its result; another tab skips its turn.
+  sorting ||= (navigator.locks ? navigator.locks.request('ranch-buck-sort', { ifAvailable: true }, (lock) => (lock ? runSort(opts) : null)) : runSort(opts)).finally(() => { sorting = null; });
+  return sorting;
+}
+async function runSort({ batches = 2, all = false } = {}) {
   const out = { sorted: 0, filed: 0, suggested: 0, newBucks: 0 };
   for (let k = 0; k < batches; k++) {
     // A whole visit at a time (same camera, minutes apart), in the order taken,
@@ -335,8 +344,37 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
       out.filed += carry.length;
     }
   }
+  out.merged = await mergeTwinBucks();
   await db.saveSettings({ buckSortLast: { ...out, at: new Date().toISOString() } });
   return out;
+}
+
+/** Move every photo, suggestion and census check from one buck to another, then delete it. */
+export async function mergeBucks(fromId, intoId) {
+  const b = db.get('bucks', fromId), into = db.get('bucks', intoId);
+  if (!b || !into || b.id === into.id) return;
+  await db.putMany('photos', db.all('photos').filter((p) => hasBuck(p, b.id) || p.buckAI?.match === b.id || p.review?.bucks?.includes(b.id) || p.buckSpots?.[b.id]).map((p) => {
+    const spots = p.buckSpots ? { ...p.buckSpots } : null;
+    if (spots?.[b.id]) { if (!spots[into.id] || (spots[b.id].by === 'you' && spots[into.id].by !== 'you')) spots[into.id] = spots[b.id]; delete spots[b.id]; }
+    return {
+      ...p,
+      ...(hasBuck(p, b.id) ? withBucks(p, photoBucks(p).map((x) => (x === b.id ? into.id : x))) : {}),
+      ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}),
+      ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}),
+      ...(spots ? { buckSpots: spots } : {}),
+    };
+  }));
+  // "Tall 10" merged into "Tall 10 2" keeps the plain name.
+  const name = String(into.name).replace(/\s+\d+$/, '') === b.name ? b.name : into.name;
+  await db.put('bucks', { ...db.get('bucks', into.id), name, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3), notSame: [...new Set([...(into.notSame || []), ...(b.notSame || [])])].filter((x) => x !== into.id && x !== b.id) });
+  await db.del('bucks', b.id);
+}
+
+/** Merge bucks the AI made twice from the same deer (see planTwinMerges). Returns how many went. */
+export async function mergeTwinBucks() {
+  const plan = planTwinMerges(db.all('bucks'), db.all('photos'));
+  for (const m of plan) await mergeBucks(m.from, m.into);
+  return plan.length;
 }
 
 /** Fix names the AI gave earlier from the photo's conditions ("Foggy Tall 10" → "Tall 10"). */

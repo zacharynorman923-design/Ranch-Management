@@ -5,7 +5,7 @@ import * as C from '../calc.js';
 import * as D from '../deer.js';
 import { esc, n0, n1, n2, stat, pill, listPanel, dateLabel, openForm, toast } from '../ui.js';
 import { photoURL, photoTags } from '../photos.js';
-import { buckRefIds, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames, resetBuckAI, undoBuckReset, relabelPhotos } from '../relay.js';
+import { buckRefIds, mergeBucks, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames, resetBuckAI, undoBuckReset, relabelPhotos } from '../relay.js';
 import { openViewer } from '../viewer.js';
 import { ranchPlace } from '../place.js';
 import { censusNow, reviewCounts, openCensusReview } from '../censusreview.js';
@@ -38,22 +38,6 @@ async function markNotSame(aId, bId) {
   const a = db.get('bucks', aId), b = db.get('bucks', bId);
   if (!a || !b) return;
   await db.putMany('bucks', [{ ...a, notSame: [...new Set([...(a.notSame || []), b.id])] }, { ...b, notSame: [...new Set([...(b.notSame || []), a.id])] }]);
-}
-
-/** Move every photo, suggestion and census check from one buck to another, then delete it. */
-async function mergeBucks(fromId, intoId) {
-  const b = db.get('bucks', fromId), into = db.get('bucks', intoId);
-  if (!b || !into || b.id === into.id) return;
-  await db.putMany('photos', db.all('photos').filter((p) => D.hasBuck(p, b.id) || p.buckAI?.match === b.id || p.review?.bucks?.includes(b.id)).map((p) => ({
-    ...p,
-    ...(D.hasBuck(p, b.id) ? D.withBucks(p, D.photoBucks(p).map((x) => (x === b.id ? into.id : x))) : {}),
-    ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}),
-    ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}),
-  })));
-  // "Tall 10" merged into "Tall 10 2" keeps the plain name.
-  const name = String(into.name).replace(/\s+\d+$/, '') === b.name ? b.name : into.name;
-  await db.put('bucks', { ...into, name, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3), notSame: [...new Set([...(into.notSame || []), ...(b.notSame || [])])].filter((x) => x !== into.id) });
-  await db.del('bucks', b.id);
 }
 
 /** Top of the page: what needs doing, as tappable counts and one row of buttons. */
