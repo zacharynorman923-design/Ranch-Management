@@ -110,3 +110,26 @@ export async function classifyPending(env) {
   await kvSet(env, 'cls_day', { date: today, n: used });
   return { model, labeled, failed, today: used, dailyLimit };
 }
+
+/**
+ * Label photos again with the current rules (e.g. after the prompts improved).
+ * body: { since: 'YYYY-MM-DD', until?: 'YYYY-MM-DD' }. Only photos the relay
+ * still keeps (PHOTO_KEEP_DAYS) can be redone; the cron works through them
+ * under the usual per-run and daily limits.
+ */
+export async function requeueLabels(env, body) {
+  if (!env.ANTHROPIC_API_KEY) throw Object.assign(new Error('Labeling needs an ANTHROPIC_API_KEY on the relay'), { status: 400 });
+  const ok = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+  if (!ok(body?.since)) throw Object.assign(new Error('since must be YYYY-MM-DD'), { status: 400 });
+  const since = `${body.since}T00:00:00.000Z`;
+  const until = ok(body.until) ? `${body.until}T23:59:59.999Z` : '9999-12-31';
+  const now = new Date().toISOString();
+  // Photos with no label row yet get one; the rest go back to pending.
+  await env.DB.prepare(`INSERT OR IGNORE INTO photo_labels (id, status, updated)
+    SELECT id, 'pending', ?1 FROM photos WHERE taken >= ?2 AND taken <= ?3`).bind(now, since, until).run();
+  const r = await env.DB.prepare(`UPDATE photo_labels SET status = 'pending', attempts = 0, updated = ?1
+    WHERE id IN (SELECT id FROM photos WHERE taken >= ?2 AND taken <= ?3)`).bind(now, since, until).run();
+  const queued = r?.meta?.changes ?? r?.changes ?? (await env.DB.prepare(`SELECT COUNT(*) AS n FROM photo_labels WHERE status = 'pending'`).first()).n;
+  const perDay = Math.min(Number(env.CLASSIFY_DAILY_LIMIT || 150), Number(env.CLASSIFY_PER_RUN || 12) * 96);
+  return { queued, perDay, days: Math.ceil(queued / Math.max(1, perDay)), keepDays: Number(env.PHOTO_KEEP_DAYS || 45) };
+}

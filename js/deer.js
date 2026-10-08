@@ -214,6 +214,7 @@ export function cleanBuckName(name) {
   const out = String(name || '').replace(/\([^)]*\)/g, (m) => (CONDITION_WORDS.test(m) ? '' : m)).replace(CONDITION_WORDS, ' ')
     .replace(/\s*[-–,/]\s*$/g, '').replace(/^\s*[-–,/]\s*/g, '').replace(/\s{2,}/g, ' ').trim();
   CONDITION_WORDS.lastIndex = 0;
+  if (/^\d{1,2}$/.test(out)) return `${out} Point`; // "Night 9" → "9 Point", not just "9"
   return out || 'Buck';
 }
 /** "tall 10, long G2s, foggy morning" → "tall 10, long G2s": drops comma parts that are about the photo. */
@@ -268,4 +269,38 @@ export function buckWhere(p, id) {
 export function bucksLabel(p, nameOf) {
   const ids = photoBucks(p);
   return ids.map((id) => { const w = ids.length > 1 ? buckWhere(p, id) : ''; return `${nameOf(id)}${w ? ` (${w})` : ''}`; }).join(' + ');
+}
+
+/* ------------------------------- start over -------------------------------- */
+/** Photo fields the buck tracker and census write (what a reset clears and an undo restores). */
+export const BUCK_FIELDS = ['buck', 'bucks', 'buckAuto', 'buckSortAt', 'buckAI', 'buckRack', 'buckSpots', 'review', 'counts'];
+
+/**
+ * What a "start over" removes.
+ *   default:          the AI's work (its unconfirmed bucks, auto-filed photos,
+ *                     suggestions, rack notes, places and sort marks)
+ *   confirmed: true   also bucks you confirmed or named, and your own tags of them
+ *   reviews: true     also your census visit checks and hand counts
+ * Returns the buck ids to delete and a patch per photo that changes.
+ */
+export function planReset(bucks, photos, { confirmed = false, reviews = false } = {}) {
+  const removeBucks = bucks.filter((b) => confirmed || b.auto).map((b) => b.id);
+  const gone = new Set(removeBucks);
+  const patches = [];
+  for (const p of photos) {
+    const patch = {};
+    // AI-filed photos lose all their bucks; your own tags stay unless the buck goes.
+    const keep = p.buckAuto ? [] : photoBucks(p).filter((id) => !gone.has(id));
+    if (keep.length !== photoBucks(p).length) Object.assign(patch, { buck: keep[0] || '', bucks: keep });
+    if (p.buckAuto) patch.buckAuto = false;
+    for (const k of ['buckSortAt', 'buckAI', 'buckRack']) if (p[k] != null && p[k] !== '') patch[k] = null;
+    if (p.buckSpots) {
+      const spots = Object.fromEntries(Object.entries(p.buckSpots).filter(([id, s]) => s.by === 'you' && keep.includes(id)));
+      if (Object.keys(spots).length !== Object.keys(p.buckSpots).length) patch.buckSpots = Object.keys(spots).length ? spots : null;
+    }
+    if (reviews && p.review) patch.review = null;
+    if (reviews && p.counts) patch.counts = null;
+    if (Object.keys(patch).length) patches.push({ id: p.id, patch });
+  }
+  return { removeBucks, keepBucks: bucks.filter((b) => !gone.has(b.id)).map((b) => b.id), patches };
 }

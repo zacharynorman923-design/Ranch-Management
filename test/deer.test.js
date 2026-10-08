@@ -155,6 +155,7 @@ test('buck names and racks drop lighting/weather words; duplicate plan keeps the
   assert.equal(D.cleanBuckName('Drop Tine'), 'Drop Tine');
   assert.equal(D.cleanBuckName('Split Brow 8'), 'Split Brow 8');
   assert.equal(D.cleanBuckName('Night'), 'Buck');
+  assert.equal(D.cleanBuckName('Night 9'), '9 Point');
   assert.equal(D.cleanRack('tall 10, long G2s, foggy morning'), 'tall 10, long G2s');
   assert.equal(D.cleanRack('kicker off right G2, IR night'), 'kicker off right G2');
   assert.equal(D.cleanRack('main-frame 8, split left brow'), 'main-frame 8, split left brow');
@@ -187,4 +188,28 @@ test('which buck is where: boxes, place words and labels', () => {
   const names = { a: 'Big 8', b: 'Tall 10' };
   assert.equal(D.bucksLabel(p, (id) => names[id]), 'Big 8 (left) + Tall 10 (right)');
   assert.equal(D.bucksLabel({ buck: 'a', buckSpots: { a: { where: 'left' } } }, (id) => names[id]), 'Big 8'); // one buck: no place needed
+});
+
+test('start over: clears the AI work, keeps yours unless asked', () => {
+  const bucks = [{ id: 'big8', name: 'Big 8' }, { id: 'auto1', name: 'Tall 10', auto: true }];
+  const photos = [
+    { id: 'p1', buck: 'auto1', bucks: ['auto1'], buckAuto: true, buckSortAt: 't', buckRack: 'tall 10', buckSpots: { auto1: { where: 'left', by: 'ai' } } },
+    { id: 'p2', buck: 'big8', bucks: ['big8'], buckSortAt: 't', buckSpots: { big8: { where: 'right', by: 'you' } }, review: { ids: ['p2'] }, counts: { buck: 1 } },
+    { id: 'p3', buck: 'big8', bucks: ['big8'], buckAuto: true },           // the AI filed this under your buck
+    { id: 'p4', buckAI: { match: 'big8' } },
+    { id: 'p5' },
+  ];
+  const r = D.planReset(bucks, photos);
+  assert.deepEqual(r.removeBucks, ['auto1']);
+  assert.deepEqual(r.keepBucks, ['big8']);
+  const by = Object.fromEntries(r.patches.map((x) => [x.id, x.patch]));
+  assert.deepEqual(by.p1, { buck: '', bucks: [], buckAuto: false, buckSortAt: null, buckRack: null, buckSpots: null });
+  assert.deepEqual(by.p2, { buckSortAt: null }); // your tag, your place and your census check stay
+  assert.deepEqual(by.p3, { buck: '', bucks: [], buckAuto: false });
+  assert.deepEqual(by.p4, { buckAI: null });
+  assert.equal(by.p5, undefined);
+  const all = D.planReset(bucks, photos, { confirmed: true, reviews: true });
+  assert.deepEqual(all.removeBucks, ['big8', 'auto1']);
+  const p2 = all.patches.find((x) => x.id === 'p2').patch;
+  assert.deepEqual(p2, { buck: '', bucks: [], buckSortAt: null, buckSpots: null, review: null, counts: null });
 });
