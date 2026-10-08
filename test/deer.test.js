@@ -261,3 +261,34 @@ test('sort plan: a headless shot keeps a buck only when he was followed through 
   assert.deepEqual(plan.assign.map((a) => a.id), ['p1', 'p2']);
   assert.deepEqual(plan.tracked, { p2: ['b1'] });
 });
+
+test('sort plan: one deer listed twice in a photo counts once', () => {
+  const plan = D.planBuckSort({ photos: [
+    { photo: 1, antlers_visible: true, bucks: [
+      { group: 'new1', confidence: 'high', box: [100, 200, 300, 400] },
+      { group: 'new2', confidence: 'high', box: [110, 210, 290, 390] }, // same box: same deer
+      { group: 'new3', confidence: 'high', box: [600, 200, 300, 400] }, // a second buck on the right
+    ] },
+    { photo: 1, antlers_visible: true, bucks: [{ group: 'new4', confidence: 'high', box: [100, 200, 300, 400] }] }, // photo repeated
+    { photo: 2, antlers_visible: true, bucks: [{ group: 'new2', confidence: 'high' }] },
+  ] }, ['p1', 'p2'], []);
+  assert.deepEqual(plan.newBucks.map((b) => [b.group, b.photoIds]), [['new1', ['p1']], ['new3', ['p1']], ['new2', ['p2']]]);
+});
+
+test('twin bucks: two AI bucks on a one-buck photo are merged, real pairs are not', () => {
+  const bucks = [
+    { id: 'a', auto: true, created: '2026-10-01' }, { id: 'b', auto: true, created: '2026-10-02' },
+    { id: 'c', auto: true, created: '2026-10-03' }, { id: 'd', auto: true }, { id: 'e', auto: true },
+    { id: 'm', auto: false }, { id: 'f', auto: true, notSame: ['g'] }, { id: 'g', auto: true },
+  ];
+  const ph = (id, ids, extra = {}) => ({ id, buck: ids[0], bucks: ids, aiCounts: { buck: 1 }, ...extra });
+  const photos = [
+    ph('p1', ['a', 'b']), ph('p2', ['b', 'c']), ph('p3', ['a']), // a, b, c are one deer; a has the most photos
+    ph('p4', ['d', 'e'], { aiCounts: { buck: 2 } }), // two bucks really in the photo
+    ph('p5', ['d', 'e'], { buckSpots: { d: { where: 'left', box: [0.05, 0.3, 0.3, 0.4] }, e: { where: 'right', box: [0.6, 0.3, 0.3, 0.4] } } }), // apart
+    ph('p6', ['a', 'm']), // m is confirmed: left for you to decide
+    ph('p7', ['f', 'g']), // you said not the same
+  ];
+  const plan = D.planTwinMerges(bucks, photos);
+  assert.deepEqual(plan.sort((x, y) => x.from.localeCompare(y.from)), [{ from: 'b', into: 'a' }, { from: 'c', into: 'a' }]);
+});

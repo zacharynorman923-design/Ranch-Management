@@ -183,11 +183,12 @@ export function planBuckSort(result, photoIds, existingIds) {
   const known = new Set(existingIds);
   const out = { assign: [], suggest: [], newBucks: [], rack: {}, spots: {}, tracked: {} };
   const groups = new Map();
+  const seen = {}; // photo id → entries already taken, so one deer listed twice counts once
   for (const p of result?.photos || []) {
     const id = photoIds[p.photo - 1];
     if (!id) continue;
     // Each buck in the photo (older replies had one group per photo).
-    const entries = Array.isArray(p.bucks) ? p.bucks : [{ group: p.group, rack: p.rack, confidence: p.confidence }];
+    const entries = sameDeerOnce(Array.isArray(p.bucks) ? p.bucks : [{ group: p.group, rack: p.rack, confidence: p.confidence }], (seen[id] ||= []));
     const racks = entries.map((b) => b.rack).filter(Boolean);
     if (racks.length) out.rack[id] = racks.join(' + ');
     for (const b of entries) {
@@ -207,6 +208,63 @@ export function planBuckSort(result, photoIds, existingIds) {
     out.newBucks.push({ group, name: String(meta.name || '').trim() || `Buck ${out.newBucks.length + 1}`, rack: meta.rack || out.rack[ids[0]] || '', refId: ids.includes(best) ? best : ids[0], photoIds: ids });
   }
   return out;
+}
+
+/** How much two 0–1 [x, y, w, h] boxes overlap (intersection over union). */
+export function boxOverlap(a, b) {
+  if (!a || !b) return 0;
+  const w = Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]);
+  const h = Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]);
+  if (w <= 0 || h <= 0) return 0;
+  const i = w * h;
+  return i / (a[2] * a[3] + b[2] * b[3] - i);
+}
+/**
+ * The AI sometimes lists one deer twice in a photo (two groups, same box), or
+ * repeats a photo. Keep the first entry for each deer: a repeat of a group, or
+ * a box mostly on top of one already taken, is dropped.
+ */
+function sameDeerOnce(entries, taken) {
+  const out = [];
+  for (const b of entries) {
+    const box = normBox(b.box);
+    const dup = b.group !== 'unsure' && taken.some((t) => t.group === b.group || (box && boxOverlap(box, t.box) >= 0.6));
+    if (dup) continue;
+    taken.push({ group: b.group, box });
+    out.push(b);
+  }
+  return out;
+}
+
+/**
+ * Bucks the AI made twice from the same deer: two unconfirmed bucks tagged on
+ * one photo that shows only one buck, in the same spot (or no spot for one).
+ * Returns [{ from, into }] merges; the buck with more photos (then the older)
+ * is kept. Pairs you marked "not the same" are left alone.
+ */
+export function planTwinMerges(bucks, photos) {
+  const by = new Map(bucks.map((b) => [b.id, b]));
+  const parent = new Map();
+  const root = (x) => { while (parent.get(x) !== x) x = parent.get(x); return x; };
+  const count = new Map();
+  for (const p of photos) for (const id of photoBucks(p)) count.set(id, (count.get(id) || 0) + 1);
+  const rank = (b) => [count.get(b.id) || 0, -(Date.parse(b.created) || 0)];
+  const better = (a, b) => { const [x, y] = [rank(a), rank(b)]; return x[0] !== y[0] ? x[0] > y[0] : x[1] >= y[1]; };
+  for (const p of photos) {
+    const ids = photoBucks(p).filter((id) => by.get(id)?.auto);
+    if (ids.length < 2 || Math.max(photoDeer(p).buck, p.aiCounts?.buck || 0) > 1) continue;
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      const [a, b] = [by.get(ids[i]), by.get(ids[j])];
+      if ((a.notSame || []).includes(b.id) || (b.notSame || []).includes(a.id)) continue;
+      const sa = p.buckSpots?.[a.id], sb = p.buckSpots?.[b.id];
+      const apart = sa && sb && ((sa.box && sb.box && boxOverlap(sa.box, sb.box) < 0.3) || (!(sa.box && sb.box) && sa.where && sb.where && sa.where !== sb.where));
+      if (apart) continue;
+      for (const x of [a.id, b.id]) if (!parent.has(x)) parent.set(x, x);
+      const [ra, rb] = [root(a.id), root(b.id)];
+      if (ra !== rb) { if (better(by.get(ra), by.get(rb))) parent.set(rb, ra); else parent.set(ra, rb); }
+    }
+  }
+  return [...parent.keys()].filter((x) => root(x) !== x).map((x) => ({ from: x, into: root(x) }));
 }
 
 /** Shots this close together on one camera are one visit for auto-sort. */
