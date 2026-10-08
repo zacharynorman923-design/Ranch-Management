@@ -3,7 +3,7 @@
    body features and says which named buck it is, a new buck, or that it
    can't tell — with the features it used, so you can check it. */
 import Anthropic from '@anthropic-ai/sdk';
-import { localDate } from './lib.js';
+import { localDate, pixelBoxToNorm } from './lib.js';
 import { kvGet, kvSet } from './store.js';
 import { modelOptions } from './classify.js';
 
@@ -45,7 +45,7 @@ export async function matchBuck(env, body) {
       confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
       reason: { type: 'string', description: 'One short line for the owner, e.g. "Same split left brow and right drop tine as Big 8".' },
       where: { type: 'string', description: 'Where this buck is in the photo, in a few words a person would use: "left", "right, in front", "center, behind the feeder", "far back left".' },
-      box: { type: 'array', items: { type: 'integer' }, description: 'Rough box around this buck as [x, y, width, height], each 0–1000 of the image width/height, from the top-left corner.' },
+      box: { type: 'array', items: { type: 'integer' }, description: 'Box around the whole deer (antler tips to hooves) as [left, top, right, bottom] in pixels of this photo, measured from its top-left corner. The photo\'s size in pixels is given with it.' },
     },
   };
   const content = [{ type: 'text', text: `Named bucks (${bucks.length}), with reference photos:` }];
@@ -53,7 +53,8 @@ export async function matchBuck(env, body) {
     content.push({ type: 'text', text: `Buck id "${b.id}", named "${b.name}":` });
     for (const r of b.refs) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r } });
   }
-  content.push({ type: 'text', text: `New photo${body.note ? ` (${String(body.note).slice(0, 200)})` : ''}:` });
+  const size = Array.isArray(body.size) ? body.size.map(Number) : null;
+  content.push({ type: 'text', text: `New photo${size ? `, ${size[0]} × ${size[1]} pixels` : ''}${body.note ? ` (${String(body.note).slice(0, 200)})` : ''}:` });
   content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } });
   content.push({ type: 'text', text: 'Is the buck in the new photo one of the named bucks (answer with its id), a new buck ("new"), or can you not tell ("unsure")? If the photo has several bucks, answer for the clearest one and say where he is.' });
 
@@ -68,6 +69,8 @@ export async function matchBuck(env, body) {
   if (res.stop_reason === 'refusal') throw Object.assign(new Error('The model declined to compare this photo'), { status: 422 });
   const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
   if (!out.antlers_visible && out.match !== 'unsure') { out.match = 'unsure'; out.confidence = 'low'; }
+  out.box = size ? pixelBoxToNorm(out.box, size[0], size[1]) : null;
+  if (out.box) out.box_v = 2;
   return { model, result: out };
 }
 
@@ -187,7 +190,7 @@ export async function sortBucks(env, body) {
                 properties: {
                   rack: { type: 'string', description: 'The rack in a few words, e.g. "main-frame 8, split left brow, ~16 in".' },
                   where: { type: 'string', description: 'Where this buck is in the photo, in a few words a person would use: "left", "right, in front", "center, behind the feeder", "far back left".' },
-                  box: { type: 'array', items: { type: 'integer' }, description: 'Rough box around this buck as [x, y, width, height], each 0–1000 of the image width/height, from the top-left corner.' },
+                  box: { type: 'array', items: { type: 'integer' }, description: 'Box around the whole deer (antler tips to hooves) as [left, top, right, bottom] in pixels of this photo, measured from its top-left corner. The photo\'s size in pixels is given with it.' },
                   group: { type: 'string', enum: groups },
                   confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
                 },
@@ -222,7 +225,8 @@ export async function sortBucks(env, body) {
   } else content.push({ type: 'text', text: 'No bucks are named yet.' });
   content.push({ type: 'text', text: `New photos to sort (${photos.length}):` });
   photos.forEach((ph, i) => {
-    content.push({ type: 'text', text: `New photo ${i + 1}${body.notes?.[i] ? ` (${String(body.notes[i]).slice(0, 80)})` : ''}:` });
+    const sz = Array.isArray(body.sizes?.[i]) ? body.sizes[i].map(Number) : null;
+    content.push({ type: 'text', text: `New photo ${i + 1}${sz ? `, ${sz[0]} × ${sz[1]} pixels` : ''}${body.notes?.[i] ? ` (${String(body.notes[i]).slice(0, 80)})` : ''}:` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: ph } });
   });
   content.push({ type: 'text', text: 'Sort every new photo into a named buck, a new group, or "unsure". Give each new group a name and its best photo.' });
@@ -238,5 +242,10 @@ export async function sortBucks(env, body) {
   const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
   // No antlers to compare means no group, whatever the model said.
   for (const p of out.photos || []) if (!p.antlers_visible) for (const b of p.bucks || []) { b.group = 'unsure'; b.confidence = 'low'; }
+  // Pixel boxes → each photo's own proportions (0–1000), marked as the new format.
+  for (const p of out.photos || []) {
+    const sz = Array.isArray(body.sizes?.[p.photo - 1]) ? body.sizes[p.photo - 1] : null;
+    for (const b of p.bucks || []) { b.box = sz ? pixelBoxToNorm(b.box, sz[0], sz[1]) : null; if (b.box) b.box_v = 2; }
+  }
   return { model, result: out };
 }

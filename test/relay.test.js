@@ -451,7 +451,7 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   const sent = [];
   const reply = {
     photos: [
-      { photo: 1, antlers_visible: true, bucks: [{ rack: 'main-frame 8, split brow', where: 'left', box: [40, 300, 380, 500], group: 'b1', confidence: 'high' }, { rack: 'tall 10', where: 'right, behind', box: [560, 250, 300, 450], group: 'new1', confidence: 'high' }] },
+      { photo: 1, antlers_visible: true, bucks: [{ rack: 'main-frame 8, split brow', where: 'left', box: [36, 270, 342, 540], group: 'b1', confidence: 'high' }, { rack: 'tall 10', where: 'right, behind', box: [540, 225, 810, 540], group: 'new1', confidence: 'high' }] },
       { photo: 2, antlers_visible: true, bucks: [{ rack: 'tall 10', group: 'new1', confidence: 'high' }] },
       { photo: 3, antlers_visible: true, bucks: [{ rack: 'tall 10', group: 'new1', confidence: 'medium' }] },
       { photo: 4, antlers_visible: false, bucks: [{ rack: 'head down', group: 'new2', confidence: 'medium' }] },
@@ -468,12 +468,16 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   t.after(() => { globalThis.fetch = realFetch; });
   const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k' };
   const img = 'data:image/jpeg;base64,' + 'C'.repeat(2000);
-  const r = await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [img, img, img, img], bucks: [{ id: 'b1', name: 'Big 8', refs: [img, img, img] }] }), headers: { 'Content-Type': 'application/json' } });
+  const r = await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [img, img, img, img], sizes: [[900, 675], [900, 675], [900, 675], [900, 675]], bucks: [{ id: 'b1', name: 'Big 8', refs: [img, img, img] }] }), headers: { 'Content-Type': 'application/json' } });
   assert.equal(r.status, 200);
   const out = (await r.json()).result;
   assert.equal(out.photos[3].bucks[0].group, 'unsure');
   assert.equal(out.photos[0].bucks.length, 2); // two bucks in one photo
   assert.equal(out.photos[0].bucks[1].where, 'right, behind');
+  // Pixel box on a 900×675 photo → that photo's own proportions (y scaled by height, not width).
+  assert.deepEqual(out.photos[0].bucks[0].box, [40, 400, 340, 400]);
+  assert.equal(out.photos[0].bucks[0].box_v, 2);
+  assert.match(sent[0].messages[0].content.find((c) => c.text?.startsWith('New photo 1')).text, /900 × 675 pixels/);
   assert.deepEqual(sent[0].output_config.format.schema.properties.photos.items.properties.bucks.items.required, ['rack', 'where', 'box', 'group', 'confidence']);
   assert.match(sent[0].system, /say which one you mean every time/);
   assert.equal(out.new_bucks[0].name, 'Tall 10');
@@ -523,4 +527,12 @@ test('relabel: puts photos in a date range back in the labeling queue', async ()
   const rows = await env.DB.prepare('SELECT id, status, attempts FROM photo_labels ORDER BY id').all();
   assert.deepEqual(rows.results.map((x) => `${x.id}:${x.status}:${x.attempts}`), ['a:pending:0', 'b:pending:0', 'c:done:1', 'd:pending:0']);
   assert.equal((await call(env, '/relabel', { method: 'POST', body: JSON.stringify({ since: 'yesterday' }) })).status, 400);
+});
+
+test('pixel boxes scale each axis by its own side', () => {
+  assert.deepEqual(L.pixelBoxToNorm([450, 337.5, 900, 675], 900, 675), [500, 500, 500, 500]);
+  assert.deepEqual(L.pixelBoxToNorm([900, 675, 450, 337], 900, 675), [500, 499, 500, 501]); // corners given backwards
+  assert.equal(L.pixelBoxToNorm([10, 10, 12, 12], 900, 675), null); // too small to mean anything
+  assert.equal(L.pixelBoxToNorm([1, 2, 3], 900, 675), null);
+  assert.equal(L.pixelBoxToNorm([0, 0, 100, 100], 0, 675), null);
 });

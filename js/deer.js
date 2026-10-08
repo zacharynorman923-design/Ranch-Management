@@ -193,7 +193,7 @@ export function planBuckSort(result, photoIds, existingIds) {
     if (p.antlers_visible === false) continue;
     for (const b of entries) {
       // Where each buck is in the frame, so a photo with two bucks says which is which.
-      if (b.group && b.group !== 'unsure' && (b.where || b.box)) (out.spots[id] ||= {})[b.group] = { where: String(b.where || '').trim(), box: normBox(b.box) };
+      if (b.group && b.group !== 'unsure' && (b.where || b.box)) (out.spots[id] ||= {})[b.group] = { where: String(b.where || '').trim(), box: normBox(b.box), ...(b.box_v ? { bv: b.box_v } : {}) };
       if (b.group === 'unsure' || b.confidence === 'low') continue;
       if (known.has(b.group)) (b.confidence === 'high' ? out.assign : out.suggest).push({ id, buck: b.group, confidence: b.confidence });
       else if (/^new\d+$/.test(b.group)) groups.set(b.group, [...new Set([...(groups.get(b.group) || []), id])]);

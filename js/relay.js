@@ -6,7 +6,7 @@
    ========================================================================= */
 import * as db from './db.js';
 import * as C from './calc.js';
-import { addPhotoFile, photoURL, photoTags, shrinkImage } from './photos.js';
+import { addPhotoFile, photoURL, photoTags, shrinkImage, imageSize } from './photos.js';
 import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
@@ -248,7 +248,7 @@ export async function matchBuckPhoto(id, roster = null) {
   if (!image) throw new Error('Photo is missing');
   try {
     const cam = db.get('devices', p.device)?.name;
-    const r = await call('/buck-match', { method: 'POST', body: { image, bucks, note: [cam, p.date, p.time].filter(Boolean).join(' ') } });
+    const r = await call('/buck-match', { method: 'POST', body: { image, size: await imageSize(image), bucks, note: [cam, p.date, p.time].filter(Boolean).join(' ') } });
     return db.put('photos', { ...db.get('photos', id), buckAI: { ...r.result, model: r.model, at: new Date().toISOString() } });
   } catch (err) {
     if (err instanceof TypeError || err.status === 429) throw err; // offline or capped: try again next sync
@@ -275,16 +275,17 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
     const todo = unsortedBuckPhotos({ all: all && k === 0 }).slice(0, SORT_BATCH);
     if (!todo.length) break;
     const roster = await buckRoster(2); // rebuilt each batch, so a buck found in batch 1 can collect more in batch 2
-    const photos = [], ids = [], notes = [];
+    const photos = [], ids = [], notes = [], sizes = [];
     for (const p of todo) {
       const u = await photoURL(p.id);
       if (!u) continue;
-      photos.push(await shrinkImage(u, 900)); ids.push(p.id);
+      const small = await shrinkImage(u, 900);
+      photos.push(small); ids.push(p.id); sizes.push(await imageSize(small));
       notes.push([db.get('devices', p.device)?.name, p.date, p.time].filter(Boolean).join(' '));
     }
     if (!photos.length) break;
     let r;
-    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes } }); } catch (err) { if (err.status === 429 || err instanceof TypeError) break; throw err; }
+    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes, sizes } }); } catch (err) { if (err.status === 429 || err instanceof TypeError) break; throw err; }
     const plan = planBuckSort(r.result, ids, roster.map((b) => b.id));
     const now = new Date().toISOString();
     const names = new Set(db.all('bucks').map((b) => String(b.name).toLowerCase()));
@@ -306,7 +307,7 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
       const found = [...plan.assign.filter((x) => x.id === id).map((x) => x.buck), ...plan.newBucks.filter((x) => x.photoIds.includes(id)).map((x) => newId[x.group])];
       const sgt = plan.suggest.find((x) => x.id === id);
       if (found.length) { Object.assign(w, withBucks(w, [...photoBucks(w), ...found])); w.buckAuto = true; out.filed++; }
-      else if (sgt) { const sp = plan.spots[id]?.[sgt.buck]; w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', where: sp?.where || '', box: sp?.box || null, at: now }; out.suggested++; }
+      else if (sgt) { const sp = plan.spots[id]?.[sgt.buck]; w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', where: sp?.where || '', box: sp?.box || null, bv: sp?.bv || 0, at: now }; out.suggested++; }
       // Where each buck is in this photo (keeps places you set yourself).
       const spots = plan.spots[id] || {};
       for (const [group, spot] of Object.entries(spots)) {

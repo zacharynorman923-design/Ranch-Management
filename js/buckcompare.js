@@ -5,7 +5,7 @@ import * as db from './db.js';
 import { photoURL } from './photos.js';
 import { photoBucks } from './deer.js';
 import { openViewer } from './viewer.js';
-import { spotBoxes, fitOverlay, placeLine } from './spots.js';
+import { spotBoxes, fitOverlay, placeLine, boxAt } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const byTime = (a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1);
@@ -39,6 +39,7 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
         ${s.ids.length > 1 ? `<button type="button" class="bcmp-nav prev" data-step="${k}:-1" ${s.at === 0 ? 'disabled' : ''} aria-label="Previous">‹</button>
           <button type="button" class="bcmp-nav next" data-step="${k}:1" ${s.at === s.ids.length - 1 ? 'disabled' : ''} aria-label="Next">›</button>` : ''}
         <button type="button" class="bcmp-zoom" data-zoom="${k}" aria-label="Zoom">🔍</button>
+        ${p && photoBucks(p).length > 1 ? `<button type="button" class="bcmp-fix ${fixing === k ? 'on' : ''}" data-fix-box="${k}">${fixing === k ? `Tap ${esc(s.buck.name)}…` : '📍 Box off?'}</button>` : ''}
         ${p ? `<span class="bcmp-when">${esc([p.date, p.time, cam(p)].filter(Boolean).join(' · '))}</span>` : ''}
         ${p && photoBucks(p).length > 1 ? `<span class="bcmp-which">${esc(placeLine(p, s.id) || `${s.buck.name} is one of ${photoBucks(p).length} bucks here`)}</span>` : ''}
       </div>
@@ -66,6 +67,7 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
     // Keep the chosen thumbnail in view.
     dlg.querySelectorAll('.bcmp-thumb.on').forEach((t) => t.scrollIntoView({ block: 'nearest', inline: 'center' }));
   };
+  let fixing = null; // pane whose box you're placing by tapping
   const step = (k, d) => { const s = sides[k]; s.at = Math.max(0, Math.min(s.ids.length - 1, s.at + d)); render(); };
   const close = () => { dlg.close(); dlg.remove(); };
 
@@ -75,6 +77,7 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
     if (t.hasAttribute('data-x')) return close();
     if (t.dataset.step) { const [k, d] = t.dataset.step.split(':').map(Number); return step(k, d); }
     if (t.dataset.pick) { const [k, i] = t.dataset.pick.split(':').map(Number); sides[k].at = i; return render(); }
+    if (t.dataset.fixBox != null) { const k = Number(t.dataset.fixBox); fixing = fixing === k ? null : k; return render(); }
     if (t.dataset.zoom != null) { const s = sides[Number(t.dataset.zoom)]; return openViewer(s.ids, s.at); }
     if (t.hasAttribute('data-merge')) {
       if (!confirm(`Merge ${sides[0].buck.name} into ${sides[1].buck.name}? All of ${sides[0].buck.name}'s photos move to ${sides[1].buck.name}.`)) return;
@@ -85,7 +88,21 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
   // Swipe a photo left/right to page through that buck's photos.
   let sx = null, sk = null;
   dlg.addEventListener('pointerdown', (e) => { const el = e.target.closest('[data-swipe]'); if (el) { sx = e.clientX; sk = Number(el.dataset.swipe); } });
-  dlg.addEventListener('pointerup', (e) => { if (sx == null) return; const dx = e.clientX - sx; sx = null; if (Math.abs(dx) > 50) step(sk, dx < 0 ? 1 : -1); });
+  dlg.addEventListener('pointerup', async (e) => {
+    if (sx == null) return;
+    const dx = e.clientX - sx; sx = null;
+    if (Math.abs(dx) > 50) return step(sk, dx < 0 ? 1 : -1);
+    if (fixing !== sk) return;
+    // Tapping the photo while fixing: the box goes where you tapped.
+    const im = dlg.querySelector(`[data-main="${sk}"]`), r = im?.getBoundingClientRect();
+    const s = sides[sk], ph = db.get('photos', s.ids[s.at]);
+    fixing = null;
+    if (r && ph) {
+      const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+      if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1) await db.put('photos', { ...ph, buckSpots: { ...(ph.buckSpots || {}), [s.id]: boxAt(fx, fy, ph.buckSpots?.[s.id]) } });
+    }
+    render();
+  });
   dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   render();
   dlg.showModal();

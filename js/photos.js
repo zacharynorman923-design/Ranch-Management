@@ -23,6 +23,9 @@ export async function photoURL(id) {
 export const photoTags = (p) => [...new Set(String((p?.tags || '').trim() ? p.tags : p?.aiTags || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
 export const isBlankPhoto = (p) => { const t = photoTags(p); return t.length === 1 && t[0] === 'empty'; };
 
+/** Pixel size of an image (data URL). */
+export const imageSize = (dataURL) => new Promise((res) => { const i = new Image(); i.onload = () => res([i.naturalWidth, i.naturalHeight]); i.onerror = () => res(null); i.src = dataURL; });
+
 /** A smaller JPEG copy of a stored photo (data URL), for sending as a reference. */
 export async function shrinkImage(dataURL, maxEdge = 640) {
   const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('not an image')); i.src = dataURL; });
