@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage } from './photos.js';
-import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks } from './deer.js';
+import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -178,7 +178,7 @@ async function doSync() {
   }
 
   // New buck photos: which named buck is it?
-  try { out.bucks = await matchPendingBucks(); } catch (err) { out.errors.push(`Buck matching: ${err.message}`); }
+  try { out.bucks = await matchPendingBucks(); await cleanAutoBuckNames(); } catch (err) { out.errors.push(`Buck matching: ${err.message}`); }
 
   // Brush photos taken without signal.
   try { out.scans = await analyzePendingScans(); } catch (err) { out.errors.push(`Brush photos: ${err.message}`); }
@@ -289,16 +289,18 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
     const names = new Set(db.all('bucks').map((b) => String(b.name).toLowerCase()));
     const newId = {};
     for (const nb of plan.newBucks) {
-      let name = nb.name, n = 2;
-      while (names.has(name.toLowerCase())) name = `${nb.name} ${n++}`;
+      // Names and notes describe the deer, never the photo ("Night 8" → "8").
+      const base = cleanBuckName(nb.name);
+      let name = base, n = 2;
+      while (names.has(name.toLowerCase())) name = `${base} ${n++}`;
       names.add(name.toLowerCase());
-      const b = await db.put('bucks', { name, status: 'active', auto: true, marks: nb.rack, refs: [nb.refId], created: now });
+      const b = await db.put('bucks', { name, status: 'active', auto: true, marks: cleanRack(nb.rack), refs: [nb.refId], created: now });
       newId[nb.group] = b.id;
       out.newBucks++;
     }
     const writes = ids.map((id) => {
       const p = db.get('photos', id);
-      const w = { ...p, buckSortAt: now, ...(plan.rack[id] ? { buckRack: plan.rack[id] } : {}) };
+      const w = { ...p, buckSortAt: now, ...(plan.rack[id] ? { buckRack: cleanRack(plan.rack[id]) } : {}) };
       // Every buck the AI found in this photo: named ones and new groups.
       const found = [...plan.assign.filter((x) => x.id === id).map((x) => x.buck), ...plan.newBucks.filter((x) => x.photoIds.includes(id)).map((x) => newId[x.group])];
       const sgt = plan.suggest.find((x) => x.id === id);
@@ -311,6 +313,46 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
   }
   await db.saveSettings({ buckSortLast: { ...out, at: new Date().toISOString() } });
   return out;
+}
+
+/** Fix names the AI gave earlier from the photo's conditions ("Foggy Tall 10" → "Tall 10"). */
+export async function cleanAutoBuckNames() {
+  const bucks = db.all('bucks');
+  const taken = new Set(bucks.map((b) => String(b.name).toLowerCase()));
+  const writes = [];
+  for (const b of bucks.filter((x) => x.auto)) {
+    const clean = cleanBuckName(b.name), marks = cleanRack(b.marks);
+    if (clean === b.name && marks === (b.marks || '')) continue;
+    taken.delete(String(b.name).toLowerCase());
+    // Same name as another buck once the photo words are gone: probably the same deer.
+    const twin = bucks.find((x) => x.id !== b.id && String(x.name).toLowerCase() === clean.toLowerCase());
+    let name = clean, n = 2;
+    while (taken.has(name.toLowerCase())) name = `${clean} ${n++}`;
+    taken.add(name.toLowerCase());
+    writes.push({ ...b, name, marks, ...(twin ? { dupOf: twin.id } : {}) });
+  }
+  if (writes.length) await db.putMany('bucks', writes);
+  return writes.length;
+}
+
+/**
+ * Ask the AI whether any of these bucks are really the same buck (e.g. one
+ * the auto-sort split into a night and a day version). Saves the answer in
+ * settings.buckDupes for the Buck tracker to show.
+ */
+export async function checkBuckDuplicates(ids) {
+  const list = ids.map((id) => db.get('bucks', id)).filter(Boolean).slice(0, 12);
+  const bucks = [];
+  for (const b of list) {
+    const refs = [];
+    for (const id of buckRefIds(b).slice(0, 3)) { const u = await photoURL(id); if (u) refs.push(await shrinkImage(u, 640)); }
+    if (refs.length) bucks.push({ id: b.id, name: b.name, refs, photos: db.all('photos').filter((p) => hasBuck(p, b.id)).length, confirmed: !b.auto });
+  }
+  if (bucks.length < 2) throw new Error('Need at least two bucks with photos to compare');
+  const r = await call('/buck-dedupe', { method: 'POST', body: { bucks } });
+  const result = { at: new Date().toISOString(), checked: bucks.map((b) => b.id), duplicates: r.result.duplicates || [] };
+  await db.saveSettings({ buckDupes: result });
+  return result;
 }
 
 async function matchPendingBucks() {

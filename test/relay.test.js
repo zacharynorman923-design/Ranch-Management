@@ -107,7 +107,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false, buckDedupe: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -479,4 +479,30 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   assert.deepEqual(body.output_config.format.schema.properties.photos.items.properties.bucks.items.properties.group.enum, ['b1', 'new1', 'new2', 'new3', 'new4', 'unsure']);
   assert.match(body.system, /Split Brow 8/);
   assert.equal((await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [] }) })).status, 400);
+});
+
+test('buck-dedupe: compares named bucks, ignores conditions, drops self-pairs', { timeout: 30000 }, async (t) => {
+  const sent = [];
+  const reply = { duplicates: [
+    { keep: 'b1', merge: 'b2', confidence: 'high', reason: 'same split brow; night photos hide it' },
+    { keep: 'b3', merge: 'b3', confidence: 'low', reason: 'self' },
+  ] };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const req = url instanceof Request ? url : new Request(String(url), opts);
+    sent.push(JSON.parse(await req.text()));
+    return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify(reply) }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k' };
+  const img = 'data:image/jpeg;base64,' + 'D'.repeat(2000);
+  const post = (bucks) => call(env, '/buck-dedupe', { method: 'POST', body: JSON.stringify({ bucks }), headers: { 'Content-Type': 'application/json' } });
+  const r = await post([{ id: 'b1', name: 'Split Brow 8', refs: [img], photos: 9, confirmed: true }, { id: 'b2', name: 'Night Split Brow', refs: [img, img] }, { id: 'b3', name: 'Tall 10', refs: [img] }]);
+  assert.equal(r.status, 200);
+  assert.deepEqual((await r.json()).result.duplicates.map((d) => [d.keep, d.merge]), [['b1', 'b2']]);
+  assert.match(sent[0].system, /NOT differences between bucks/);
+  assert.deepEqual(sent[0].output_config.format.schema.properties.duplicates.items.properties.keep.enum, ['b1', 'b2', 'b3']);
+  assert.match(sent[0].messages[0].content.find((c) => c.text?.includes('b1')).text, /confirmed by the owner/);
+  assert.equal((await post([{ id: 'b1', name: 'x', refs: [img] }])).status, 400);
 });

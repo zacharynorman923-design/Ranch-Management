@@ -5,7 +5,7 @@ import * as C from '../calc.js';
 import * as D from '../deer.js';
 import { esc, n0, n1, n2, stat, pill, listPanel, dateLabel, openForm, toast } from '../ui.js';
 import { photoURL, photoTags } from '../photos.js';
-import { buckRefIds, sortPendingBucks, unsortedBuckPhotos } from '../relay.js';
+import { buckRefIds, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames } from '../relay.js';
 import { openViewer } from '../viewer.js';
 import { ranchPlace } from '../place.js';
 import { censusNow, reviewCounts, openCensusReview } from '../censusreview.js';
@@ -21,68 +21,126 @@ function patternFor(b) {
   return D.buckPattern(db.all('photos').filter((p) => D.hasBuck(p, b.id)), { lat: pl.lat, lon: pl.lon, today: new Date() });
 }
 
-function autoSortPanel() {
+const ui = { filter: 'all', dupesBusy: false };
+const photosOf = (id) => db.all('photos').filter((p) => D.hasBuck(p, id));
+const isPast = (b) => ['harvested', 'gone'].includes(b.status || 'active');
+const plural = (n, w, ws = `${w}s`) => `${n} ${n === 1 ? w : ws}`;
+const FILTERS = [
+  ['all', 'All', (b) => !isPast(b)],
+  ['check', '🤖 To check', (b) => !isPast(b) && (b.auto || photosOf(b.id).some((p) => p.buckAuto))],
+  ['confirmed', 'Confirmed', (b) => !isPast(b) && !b.auto],
+  ['past', 'Harvested / gone', isPast],
+];
+
+/** Move every photo, suggestion and census check from one buck to another, then delete it. */
+async function mergeBucks(fromId, intoId) {
+  const b = db.get('bucks', fromId), into = db.get('bucks', intoId);
+  if (!b || !into || b.id === into.id) return;
+  await db.putMany('photos', db.all('photos').filter((p) => D.hasBuck(p, b.id) || p.buckAI?.match === b.id || p.review?.bucks?.includes(b.id)).map((p) => ({
+    ...p,
+    ...(D.hasBuck(p, b.id) ? D.withBucks(p, D.photoBucks(p).map((x) => (x === b.id ? into.id : x))) : {}),
+    ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}),
+    ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}),
+  })));
+  // "Tall 10" merged into "Tall 10 2" keeps the plain name.
+  const name = String(into.name).replace(/\s+\d+$/, '') === b.name ? b.name : into.name;
+  await db.put('bucks', { ...into, name, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3), notSame: [...new Set([...(into.notSame || []), ...(b.notSame || [])])].filter((x) => x !== into.id) });
+  await db.del('bucks', b.id);
+}
+
+/** Top of the page: what needs doing, as tappable counts and one row of buttons. */
+function summaryPanel() {
   const st = db.settings();
   const can = !!st.relayInfo?.sources?.buckSort;
   const unsorted = unsortedBuckPhotos();
   const autoPhotos = db.all('photos').filter((p) => D.photoBucks(p).length && p.buckAuto).sort(byTime);
-  const autoBucks = db.all('bucks').filter((b) => b.auto && (b.status || 'active') === 'active');
-  const last = st.buckSortLast;
-  if (!can && !unsorted.length && !autoPhotos.length) return '';
-  return `<section class="panel auto-sort">
-    <div class="panel-head"><h2>🤖 Auto-sort</h2>${unsorted.length ? pill(`${unsorted.length} to sort`, 'warn') : pill('up to date', 'good')}</div>
-    <p class="small">The AI looks at your buck photos together, groups the ones that are the same buck, files them under bucks you've named, and starts a new buck (named for his rack) for each one it hasn't seen. It runs on its own when the app syncs. Anything it files is marked 🤖 until you check it.</p>
-    ${can ? `<div class="head-actions"><button class="btn primary" data-sort-now ${unsorted.length ? '' : 'disabled'}>${unsorted.length ? `Sort ${unsorted.length} photo${unsorted.length === 1 ? '' : 's'} now` : 'Nothing new to sort'}</button>
-      ${db.all('photos').some((p) => p.buckSortAt && !D.photoBucks(p).length) ? '<button class="btn" data-sort-again>Try the unsure ones again</button>' : ''}</div>`
-      : '<p class="note warn">Auto-sort needs the relay updated: re-run <b>Deploy relay</b> in GitHub Actions, then sync.</p>'}
-    ${last ? `<p class="small muted">Last run ${esc(new Date(last.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}: ${last.sorted} photo${last.sorted === 1 ? '' : 's'} looked at, ${last.filed} filed, ${last.newBucks} new buck${last.newBucks === 1 ? '' : 's'}, ${last.suggested} suggestion${last.suggested === 1 ? '' : 's'}.</p>` : ''}
-    ${autoPhotos.length ? `<div class="auto-check"><b>${autoPhotos.length} auto-filed photo${autoPhotos.length === 1 ? '' : 's'}</b>${autoBucks.length ? ` · ${autoBucks.length} new buck${autoBucks.length === 1 ? '' : 's'}` : ''} to check
-      <button class="btn sm primary" data-view="${esc(autoPhotos.map((p) => p.id).join(','))}">Check them</button></div>` : ''}
-  </section>`;
-}
-
-function reviewPanel() {
   const since = C.addDays(C.today(), -60);
-  const bucks = new Map(db.all('bucks').map((b) => [b.id, b]));
-  const buckPhotos = db.all('photos').filter((p) => p.date >= since && !D.photoBucks(p).length && photoTags(p).includes('buck')).sort(byTime);
-  const suggested = buckPhotos.filter((p) => bucks.has(p.buckAI?.match));
-  const newOnes = buckPhotos.filter((p) => p.buckAI?.match === 'new');
-  const rest = buckPhotos.filter((p) => !bucks.has(p.buckAI?.match) && p.buckAI?.match !== 'new');
-  if (!buckPhotos.length) return '';
-  return `<section class="panel">
-    <div class="panel-head"><h2>Still to identify</h2>${pill(`${buckPhotos.length} buck photo${buckPhotos.length === 1 ? '' : 's'}`, 'warn')}</div>
-    ${suggested.length ? `<ul class="plain buck-review">${suggested.slice(0, 20).map((p) => { const b = bucks.get(p.buckAI.match); return `<li>
-      ${thumb(p.id, 'buck-thumb', suggested.map((x) => x.id).join(','))}
-      <div class="grow"><b>${esc(b.name)}?</b> ${pill(p.buckAI.confidence, p.buckAI.confidence === 'high' ? 'good' : p.buckAI.confidence === 'low' ? 'bad' : 'warn')}
-        <div class="small muted">${esc(camName(p.device))} · ${when(p)}</div>${p.buckAI.reason ? `<div class="small">${esc(p.buckAI.reason)}</div>` : ''}
-        <div class="head-actions"><button class="btn sm primary" data-yes="${esc(p.id)}">✓ ${esc(b.name)}</button><button class="btn sm" data-no="${esc(p.id)}">✕ Not him</button></div></div></li>`; }).join('')}</ul>` : ''}
-    <div class="head-actions">
-      ${newOnes.length ? `<button class="btn" data-view="${esc(newOnes.map((p) => p.id).join(','))}">🆕 ${newOnes.length} look like unnamed bucks</button>` : ''}
-      ${rest.length ? `<button class="btn" data-view="${esc(rest.map((p) => p.id).join(','))}">🔍 Identify ${rest.length} more</button>` : ''}
+  const unidentified = db.all('photos').filter((p) => p.date >= since && !D.photoBucks(p).length && photoTags(p).includes('buck')).sort(byTime);
+  const active = db.all('bucks').filter((b) => !isPast(b));
+  const last = st.buckSortLast;
+  const tile = (n, label, attrs, tone = '') => `<button type="button" class="bt-stat ${tone}" ${attrs} ${n ? '' : 'disabled'}><b>${n}</b><span>${label}</span></button>`;
+  return `<section class="panel bt-top">
+    <div class="bt-stats">
+      ${tile(active.length, plural(active.length, 'buck').replace(/^\d+ /, ''), 'data-jump="bucks"')}
+      ${tile(autoPhotos.length, 'to check', `data-view="${esc(autoPhotos.map((p) => p.id).join(','))}"`, autoPhotos.length ? 'warn' : '')}
+      ${tile(unidentified.length, 'unidentified', `data-view="${esc(unidentified.map((p) => p.id).join(','))}"`)}
+      ${tile(unsorted.length, 'to sort', can ? 'data-sort-now' : '', unsorted.length ? 'warn' : '')}
     </div>
-    <p class="note">These are the buck photos auto-sort couldn't place (rack not visible, or too close to call) or isn't sure about. Open one and tap the buck's name, or <b>＋ New buck</b>.</p>
+    <div class="bt-actions">
+      ${can && unsorted.length ? `<button class="btn primary" data-sort-now>🤖 Sort ${plural(unsorted.length, 'photo')}</button>` : ''}
+      ${autoPhotos.length ? `<button class="btn ${can && unsorted.length ? '' : 'primary'}" data-view="${esc(autoPhotos.map((p) => p.id).join(','))}">✓ Check ${autoPhotos.length}</button>` : ''}
+      ${unidentified.length ? `<button class="btn" data-view="${esc(unidentified.map((p) => p.id).join(','))}">🔍 Identify ${unidentified.length}</button>` : ''}
+      ${can && db.all('photos').some((p) => p.buckSortAt && !D.photoBucks(p).length) ? '<button class="btn" data-sort-again>↻ Retry unsure</button>' : ''}
+    </div>
+    ${!can ? '<p class="note warn small">Auto-sort needs the relay updated: re-run <b>Deploy relay</b> in GitHub Actions, then sync.</p>' : ''}
+    <details class="lines bt-how"><summary class="small">${last ? `Last auto-sort ${esc(new Date(last.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}: ${last.sorted} looked at, ${last.filed} filed, ${plural(last.newBucks, 'new buck')}` : 'How auto-sort works'}</summary>
+      <p class="small">When the app syncs, the AI looks at new buck photos together, files the ones it recognizes under your bucks, and starts a new buck (named for his rack) for each one it hasn't seen. Anything it files is marked 🤖 until you check it. Photos it can't place (rack not visible, too close to call) stay under <b>unidentified</b>.</p>
+    </details>
   </section>`;
 }
 
-function buckList() {
-  const bucks = db.all('bucks').sort((a, b) => ((a.status || 'active') === 'active' ? 0 : 1) - ((b.status || 'active') === 'active' ? 0 : 1) || String(a.name).localeCompare(b.name));
+/** AI suggestions waiting for a yes/no (from per-photo matching). */
+function suggestionsPanel() {
+  const bucks = new Map(db.all('bucks').map((b) => [b.id, b]));
+  const since = C.addDays(C.today(), -60);
+  const sug = db.all('photos').filter((p) => p.date >= since && !D.photoBucks(p).length && bucks.has(p.buckAI?.match)).sort(byTime);
+  if (!sug.length) return '';
   return `<section class="panel">
-    <div class="panel-head"><h2>Your bucks</h2><button class="btn primary" data-add-buck>＋ Add</button></div>
-    ${bucks.length ? `<div class="cards">${bucks.map((b) => {
-      const pt = patternFor(b);
-      const ref = buckRefIds(b)[0];
-      return `<a class="card buck-card ${esc(b.status || 'active')}" href="#/bucks?id=${esc(b.id)}">
-        <div class="buck-card-top">${thumb(ref)}<div class="grow"><b>${esc(b.name)}</b> ${(b.status || 'active') !== 'active' ? pill(b.status) : ''}${b.auto ? ` ${pill('🤖 auto · check', 'warn')}` : ''}
-          <div class="small muted">${[b.points ? `${b.points} pts` : '', b.age ? `${b.age}+ yrs`.replace('.5+', '½') : '', b.marks].filter(Boolean).map(esc).join(' · ')}</div></div></div>
-        ${(() => { const n = db.all('photos').filter((p) => D.hasBuck(p, b.id) && p.buckAuto).length; return n ? `<div class="small">🤖 ${n} auto-filed photo${n === 1 ? '' : 's'} to check</div>` : ''; })()}
-        <div class="small">${pt.sightings ? `${pt.sightings} sighting${pt.sightings === 1 ? '' : 's'} · last ${when(pt.last)} at ${esc(camName(pt.last.device))}` : 'No confirmed photos yet'}</div>
-        ${pt.daylight != null ? `<div class="small">☀️ ${Math.round(pt.daylight * 100)}% in daylight${pt.recentDaylight ? ` · ${pill(`${pt.recentDaylight} daylight this week`, 'good')}` : ''}</div>` : ''}
-      </a>`;
-    }).join('')}</div>` : `<p class="empty">No named bucks yet.</p>
-      <p class="small">Auto-sort will start bucks for you as buck photos come in. Or name one yourself:</p><ol class="steps"><li>Open a good, clear buck photo (daylight or broadside is best) in the <a href="#/photos?tag=buck">Photo log</a>.</li>
-        <li>Tap <b>＋ New buck</b> and give him a name. That photo becomes his reference.</li>
-        <li>Add 1–2 more photos of him from other angles with <b>☆ use as reference</b>.</li>
-        <li>From then on, new buck photos are compared with your named bucks automatically.</li></ol>`}
+    <div class="panel-head"><h2>Suggested matches</h2>${pill(String(sug.length), 'warn')}</div>
+    <ul class="plain buck-review">${sug.slice(0, 12).map((p) => { const b = bucks.get(p.buckAI.match); return `<li>
+      ${thumb(p.id, 'buck-thumb', sug.map((x) => x.id).join(','))}
+      <div class="grow"><b>${esc(b.name)}?</b> ${pill(p.buckAI.confidence, p.buckAI.confidence === 'high' ? 'good' : p.buckAI.confidence === 'low' ? 'bad' : 'warn')}
+        <div class="small muted">${esc(camName(p.device))} · ${when(p)}</div>
+        <div class="bt-row"><button class="btn sm primary" data-yes="${esc(p.id)}">✓ ${esc(b.name)}</button><button class="btn sm" data-no="${esc(p.id)}">✕ No</button></div></div></li>`; }).join('')}</ul>
+  </section>`;
+}
+
+/** Possible duplicates from the last AI check, still standing. */
+function dupesHTML() {
+  const res = db.settings().buckDupes;
+  // Pairs whose names matched once photo words ("Night", "Foggy") were removed, even before an AI check.
+  const named = db.all('bucks').filter((b) => b.dupOf && db.get('bucks', b.dupOf)).map((b) => ({ keep: b.dupOf, merge: b.id, confidence: 'medium', reason: `Same name as ${db.get('bucks', b.dupOf).name} once the photo's conditions were taken out of it.` }));
+  if (!res && !named.length) return '';
+  const counts = (id) => photosOf(id).length;
+  const pairs = D.planDedupe([...(res?.duplicates || []), ...named], db.all('bucks'), counts);
+  const when = res ? new Date(res.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'by name';
+  if (!pairs.length) return `<p class="small muted bt-dupes-none">✓ Duplicate check ${esc(when)}: no bucks look like the same deer.</p>`;
+  return `<div class="bt-dupes"><div class="bt-dupes-head"><b>Possible duplicates</b> <small class="muted">checked ${esc(when)}</small></div>
+    ${pairs.map((d) => { const k = db.get('bucks', d.keep), m = db.get('bucks', d.merge); const ids = [...photosOf(m.id), ...photosOf(k.id)].sort(byTime).map((p) => p.id); return `<div class="bt-dupe">
+      <div class="bt-dupe-pair">
+        <figure>${thumb(buckRefIds(m)[0], 'bt-dupe-img', ids.join(','))}<figcaption><b>${esc(m.name)}</b><small>${plural(counts(m.id), 'photo')}${m.auto ? ' · 🤖' : ''}</small></figcaption></figure>
+        <span class="bt-dupe-arrow">→</span>
+        <figure>${thumb(buckRefIds(k)[0], 'bt-dupe-img', ids.join(','))}<figcaption><b>${esc(k.name)}</b><small>${plural(counts(k.id), 'photo')}${k.auto ? ' · 🤖' : ''}</small></figcaption></figure>
+      </div>
+      <div class="small">${pill(d.confidence, d.confidence === 'high' ? 'good' : d.confidence === 'low' ? 'bad' : 'warn')} ${esc(d.reason)}</div>
+      <div class="bt-row"><button class="btn sm primary" data-dmerge="${esc(m.id)}:${esc(k.id)}">Merge as one buck</button><button class="btn sm" data-view="${esc(ids.join(','))}">Compare</button><button class="btn sm" data-dnot="${esc(m.id)}:${esc(k.id)}">Not the same</button></div>
+    </div>`; }).join('')}</div>`;
+}
+
+function bucksPanel() {
+  const all = db.all('bucks');
+  const f = FILTERS.find((x) => x[0] === ui.filter) || FILTERS[0];
+  const shown = all.filter(f[2]).sort((a, b) => (photosOf(b.id).length - photosOf(a.id).length) || String(a.name).localeCompare(b.name));
+  const canDedupe = !!db.settings().relayInfo?.sources?.buckDedupe;
+  const tiles = shown.map((b) => {
+    const pt = patternFor(b);
+    const toCheck = photosOf(b.id).filter((p) => p.buckAuto).length;
+    return `<a class="bt-tile ${b.auto ? 'auto' : ''} ${esc(b.status || 'active')}" href="#/bucks?id=${esc(b.id)}">
+      <div class="bt-tile-img">${thumb(buckRefIds(b)[0], 'bt-img')}${b.auto || toCheck ? `<span class="bt-flag">🤖 ${toCheck ? `${toCheck} to check` : 'new'}</span>` : ''}${pt.recentDaylight ? '<span class="bt-sun" title="Seen in daylight this week">☀️</span>' : ''}</div>
+      <div class="bt-tile-body"><b class="bt-name">${esc(b.name)}</b>
+        <span class="bt-meta">${plural(pt.sightings, 'photo')}${pt.daylight != null ? ` · ☀️ ${Math.round(pt.daylight * 100)}%` : ''}</span>
+        <span class="bt-meta">${pt.last ? `last ${esc(dateLabel(pt.last.date).replace(/, \d{4}$/, ''))}` : 'no photos yet'}${isPast(b) ? ` · ${esc(b.status)}` : ''}</span></div>
+    </a>`;
+  }).join('');
+  return `<section class="panel" id="bucks">
+    <div class="panel-head"><h2>Your bucks</h2><button class="btn sm" data-add-buck>＋ Add</button></div>
+    <div class="chips bt-filters">${FILTERS.map(([k, l, fn]) => { const n = all.filter(fn).length; return `<button class="chip ${k === f[0] ? 'on' : ''}" data-bfilter="${k}" ${n || k === 'all' ? '' : 'disabled'}>${l} · ${n}</button>`; }).join('')}</div>
+    ${shown.length >= 2 ? `<div class="bt-dedupe-row">${canDedupe
+      ? `<button class="btn" data-dedupe ${ui.dupesBusy ? 'disabled' : ''}>${ui.dupesBusy ? '🤖 Comparing…' : `🤖 Check ${shown.length > 12 ? 'the top 12' : `these ${shown.length}`} for duplicates`}</button>`
+      : '<small class="muted">Duplicate checking needs the relay updated (re-run Deploy relay).</small>'}</div>` : ''}
+    ${dupesHTML()}
+    ${shown.length ? `<div class="bt-grid">${tiles}</div>` : all.length ? '<p class="empty">No bucks in this list.</p>'
+      : `<p class="empty">No bucks yet. Auto-sort starts them as buck photos come in, or open a clear buck photo in the <a href="#/photos?tag=buck">Photo log</a> and tap <b>＋ New buck</b>.</p>`}
   </section>`;
 }
 
@@ -91,11 +149,13 @@ function buckDetail(b) {
   const photos = db.all('photos').filter((p) => D.hasBuck(p, b.id)).sort(byTime);
   const refs = buckRefIds(b);
   const max = Math.max(1, ...pt.hours);
-  return `<section class="panel">
-      <div class="panel-head"><h2>🦌 ${esc(b.name)}</h2>${pill(b.status || 'active', (b.status || 'active') === 'active' ? 'good' : '')}
+  return `<section class="panel bd">
+      <a class="bd-back small" href="#/bucks">← All bucks</a>
+      <div class="bd-hero">${thumb(refs[0], 'bd-hero-img', photos.map((p) => p.id).join(','))}${photos.length ? `<span class="bd-count">${photos.length} photo${photos.length === 1 ? '' : 's'} ›</span>` : ''}</div>
+      <div class="bd-head"><h2>${esc(b.name)}</h2>
+        ${b.auto ? pill('🤖 auto', 'warn') : ''}${isPast(b) ? pill(b.status) : ''}
         <button class="btn sm" data-edit-buck="${esc(b.id)}">Edit</button></div>
-      <p class="small"><a href="#/bucks">← All bucks</a></p>
-      ${b.marks ? `<p>${esc(b.marks)}</p>` : ''}
+      ${b.marks ? `<p class="bd-marks">${esc(b.marks)}</p>` : ''}
       ${(() => {
         const autoIds = photos.filter((p) => p.buckAuto).map((p) => p.id);
         if (!b.auto && !autoIds.length) return '';
@@ -111,12 +171,13 @@ function buckDetail(b) {
           <button class="btn sm link" data-unsort>${b.auto ? 'Not one buck: undo this group' : 'Undo the auto-filed photos'}</button>
         </div>`;
       })()}
-      <div class="stats">
-        ${stat('Sightings', n0(pt.sightings), `${pt.days} different day${pt.days === 1 ? '' : 's'}`)}
-        ${stat('Last seen', pt.last ? dateLabel(pt.last.date) : '—', pt.last ? `${pt.last.time || ''} · ${camName(pt.last.device)}` : '')}
-        ${stat('In daylight', pt.daylight == null ? '—' : `${Math.round(pt.daylight * 100)}%`, pt.recent ? `${pt.recentDaylight} of ${pt.recent} this week` : '', pt.recentDaylight ? 'good' : '')}
-        ${stat('Busiest hour', pt.peak == null ? '—' : hourLabel(pt.peak))}
+      <div class="bd-stats">
+        <div><b>${n0(pt.sightings)}</b><span>photos</span></div>
+        <div><b>${pt.days}</b><span>days seen</span></div>
+        <div class="${pt.recentDaylight ? 'good' : ''}"><b>${pt.daylight == null ? '—' : `${Math.round(pt.daylight * 100)}%`}</b><span>daylight</span></div>
+        <div><b>${pt.peak == null ? '—' : hourLabel(pt.peak)}</b><span>busiest</span></div>
       </div>
+      ${pt.last ? `<p class="small bd-last">Last seen <b>${esc(dateLabel(pt.last.date))}</b>${pt.last.time ? ` at ${esc(pt.last.time)}` : ''} · ${esc(camName(pt.last.device))}${pt.recentDaylight ? ` · <span class="good-t">☀️ ${pt.recentDaylight} daylight this week</span>` : ''}</p>` : ''}
       ${pt.sightings ? `<h3>Time of day</h3><div class="hour-chart">${pt.hours.map((n, h) => `<div class="hour-bar" title="${hourLabel(h)}: ${n}"><span style="height:${Math.round((n / max) * 100)}%"></span><small>${h % 6 === 0 ? hourLabel(h) : ''}</small></div>`).join('')}</div>
       <h3>Where</h3><ul class="plain">${pt.cameras.map((c) => `<li>${esc(camName(c.device))}: <b>${c.n}</b> photo${c.n === 1 ? '' : 's'}</li>`).join('')}</ul>` : ''}
       <h3>Reference photos</h3>
@@ -141,7 +202,7 @@ function censusPanel() {
   if (rc.unidentified) warn.push(`${rc.unidentified} buck visit${rc.unidentified === 1 ? ' has' : 's have'} no named buck, so the buck count may be low.`);
   if (!c.occ.buck) warn.push('No buck photos in this window.');
   const autoInWindow = photos.filter((p) => p.buckAuto).length;
-  if (autoInWindow) warn.push(`${autoInWindow} buck photo${autoInWindow === 1 ? ' was' : 's were'} auto-sorted and not checked yet. The unique-buck count depends on them, so check them under Auto-sort.`);
+  if (autoInWindow) warn.push(`${autoInWindow} buck photo${autoInWindow === 1 ? ' was' : 's were'} auto-sorted and not checked yet. The unique-buck count depends on them: tap “to check” at the top.`);
   const res = (k, label, value, sub, filter) => `<button type="button" class="cres" data-review="${filter}" ${rc[filter] ? '' : 'disabled'}>
     <span class="cres-label">${label}</span><span class="cres-value">${value}</span><span class="cres-sub">${sub}</span>${rc[filter] ? '<span class="cres-go">See photos ›</span>' : ''}</button>`;
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -203,7 +264,7 @@ export function bucks(params) {
   const id = params.get('id');
   const b = id ? db.get('bucks', id) : null;
   if (b) return buckDetail(b);
-  return `${autoSortPanel()}${buckList()}${reviewPanel()}${censusPanel()}`;
+  return `${summaryPanel()}${suggestionsPanel()}${bucksPanel()}${censusPanel()}`;
 }
 
 export function bindBucks(el, rerender, params) {
@@ -221,11 +282,11 @@ export function bindBucks(el, rerender, params) {
     const p = db.get('photos', x.dataset.no);
     if (p) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
   }));
-  el.querySelector('[data-sort-now]')?.addEventListener('click', async (e) => {
-    const btn = e.currentTarget; btn.disabled = true; btn.textContent = '🤖 Sorting… (about a minute)';
+  el.querySelectorAll('[data-sort-now]').forEach((x) => x.addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = '🤖 Sorting…';
     try { const r = await sortPendingBucks({ batches: 6 }); toast(r ? `Sorted ${r.sorted}: ${r.filed} filed, ${r.newBucks} new buck${r.newBucks === 1 ? '' : 's'}` : 'Auto-sort isn\'t available yet'); }
     catch (err) { toast(`Couldn't sort: ${err.message}`); btn.disabled = false; }
-  });
+  }));
   el.querySelector('[data-sort-again]')?.addEventListener('click', async () => {
     const ids = db.all('photos').filter((p) => p.buckSortAt && !D.photoBucks(p).length);
     await db.putMany('photos', ids.map((p) => { const { buckSortAt, ...rest } = p; return rest; }));
@@ -246,11 +307,9 @@ export function bindBucks(el, rerender, params) {
   el.querySelector('[data-merge]')?.addEventListener('click', async () => {
     const b = curBuck(); const into = db.get('bucks', el.querySelector('[data-merge-into]')?.value);
     if (!b || !into || !confirm(`Move all of ${b.name}'s photos to ${into.name}?`)) return;
-    await db.putMany('photos', db.all('photos').filter((p) => D.hasBuck(p, b.id) || p.buckAI?.match === b.id).map((p) => ({ ...p, ...(D.hasBuck(p, b.id) ? D.withBucks(p, D.photoBucks(p).map((x) => (x === b.id ? into.id : x))) : {}), ...(p.buckAI?.match === b.id ? { buckAI: { ...p.buckAI, match: into.id } } : {}), ...(p.review?.bucks?.includes(b.id) ? { review: { ...p.review, bucks: [...new Set(p.review.bucks.map((x) => (x === b.id ? into.id : x)))] } } : {}) })));
-    await db.put('bucks', { ...into, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3) });
-    await db.del('bucks', b.id);
+    await mergeBucks(b.id, into.id);
     location.hash = `#/bucks?id=${into.id}`;
-    toast(`Merged into ${into.name}`);
+    toast(`Merged into ${db.get('bucks', into.id)?.name || into.name}`);
   });
   el.querySelector('[data-unsort]')?.addEventListener('click', async () => {
     const b = curBuck(); if (!b) return;
@@ -259,6 +318,32 @@ export function bindBucks(el, rerender, params) {
     if (b.auto && !db.all('photos').some((p) => D.hasBuck(p, b.id))) { await db.del('bucks', b.id); location.hash = '#/bucks'; }
     toast('Undone');
   });
+  cleanAutoBuckNames().catch(() => {});
+  el.querySelectorAll('[data-bfilter]').forEach((x) => x.addEventListener('click', () => { ui.filter = x.dataset.bfilter; rerender(); }));
+  el.querySelector('[data-jump="bucks"]')?.addEventListener('click', () => el.querySelector('#bucks')?.scrollIntoView({ behavior: 'smooth' }));
+  el.querySelector('[data-dedupe]')?.addEventListener('click', async () => {
+    const f = FILTERS.find((x) => x[0] === ui.filter) || FILTERS[0];
+    const ids = db.all('bucks').filter(f[2]).sort((a, b) => photosOf(b.id).length - photosOf(a.id).length).slice(0, 12).map((b) => b.id);
+    ui.dupesBusy = true; rerender();
+    try {
+      const r = await checkBuckDuplicates(ids);
+      const n = D.planDedupe(r.duplicates, db.all('bucks'), (id) => photosOf(id).length).length;
+      toast(n ? `${plural(n, 'possible duplicate')} found` : 'No duplicates found');
+    } catch (err) { toast(`Couldn't check: ${err.message}`); }
+    ui.dupesBusy = false; rerender();
+  });
+  el.querySelectorAll('[data-dmerge]').forEach((x) => x.addEventListener('click', async () => {
+    const [from, into] = x.dataset.dmerge.split(':');
+    const a = db.get('bucks', from), b = db.get('bucks', into);
+    if (!a || !b || !confirm(`Merge ${a.name} into ${b.name}? All of ${a.name}'s photos move to ${b.name}.`)) return;
+    await mergeBucks(from, into);
+    toast(`Merged into ${db.get('bucks', into)?.name || b.name}`);
+  }));
+  el.querySelectorAll('[data-dnot]').forEach((x) => x.addEventListener('click', async () => {
+    const [a, b] = x.dataset.dnot.split(':').map((id) => db.get('bucks', id));
+    if (!a || !b) return;
+    await db.putMany('bucks', [{ ...a, notSame: [...new Set([...(a.notSame || []), b.id])] }, { ...b, notSame: [...new Set([...(b.notSame || []), a.id])] }]);
+  }));
   el.querySelector('[data-add-buck]')?.addEventListener('click', () => openForm('bucks', null, { status: 'active' }));
   el.querySelector('[data-edit-buck]')?.addEventListener('click', (e) => openForm('bucks', db.get('bucks', e.currentTarget.dataset.editBuck)));
   el.querySelectorAll('[data-status]').forEach((x) => x.addEventListener('click', async () => {

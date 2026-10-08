@@ -204,3 +204,41 @@ export function planBuckSort(result, photoIds, existingIds) {
   }
   return out;
 }
+
+/* Lighting, weather and camera words describe the photo, not the deer. */
+const CONDITION_WORDS = /\b(night(time)?|nocturnal|ir|infra-?red|b&w|black[- ]and[- ]white|fog(gy)?|mist(y)?|haz(e|y)|rain(y)?|wet|blur(ry|red)?|grainy|day(light|time)?|morning|evening|dusk|dawn|sunrise|sunset|feeder|cam(era)?)\b/gi;
+/** "Night Kicker 9" → "Kicker 9". Falls back to "Buck" if nothing's left. */
+export function cleanBuckName(name) {
+  const out = String(name || '').replace(/\([^)]*\)/g, (m) => (CONDITION_WORDS.test(m) ? '' : m)).replace(CONDITION_WORDS, ' ')
+    .replace(/\s*[-–,/]\s*$/g, '').replace(/^\s*[-–,/]\s*/g, '').replace(/\s{2,}/g, ' ').trim();
+  CONDITION_WORDS.lastIndex = 0;
+  return out || 'Buck';
+}
+/** "tall 10, long G2s, foggy morning" → "tall 10, long G2s": drops comma parts that are about the photo. */
+export function cleanRack(text) {
+  return String(text || '').split(/\s*[,;]\s*/).filter((part) => { const hit = CONDITION_WORDS.test(part); CONDITION_WORDS.lastIndex = 0; return part && !hit; }).join(', ');
+}
+
+/**
+ * Duplicate pairs from the AI, ready to show: drops pairs you said were
+ * different and pairs with a buck that's gone, and keeps the buck you
+ * confirmed (or the one with more photos) as the one to merge into.
+ */
+export function planDedupe(duplicates, bucks, photoCount = () => 0) {
+  const by = new Map(bucks.map((b) => [b.id, b]));
+  const seen = new Set();
+  const out = [];
+  for (const d of duplicates || []) {
+    let keep = by.get(d.keep), merge = by.get(d.merge);
+    if (!keep || !merge || keep.id === merge.id) continue;
+    if ((keep.notSame || []).includes(merge.id) || (merge.notSame || []).includes(keep.id)) continue;
+    const k = [keep.id, merge.id].sort().join('|');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const rank = (b) => (b.auto ? 0 : 1000) + photoCount(b.id);
+    if (rank(merge) > rank(keep)) [keep, merge] = [merge, keep];
+    out.push({ keep: keep.id, merge: merge.id, confidence: d.confidence, reason: d.reason });
+  }
+  const order = { high: 0, medium: 1, low: 2 };
+  return out.sort((a, b) => order[a.confidence] - order[b.confidence]);
+}
