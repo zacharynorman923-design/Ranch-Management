@@ -9,6 +9,7 @@ import { buckRefIds, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, 
 import { openViewer } from '../viewer.js';
 import { ranchPlace } from '../place.js';
 import { censusNow, reviewCounts, openCensusReview } from '../censusreview.js';
+import { openBuckCompare } from '../buckcompare.js';
 
 const byTime = (a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1);
 const camName = (id) => db.get('devices', id)?.name || 'Other camera';
@@ -31,6 +32,13 @@ const FILTERS = [
   ['confirmed', 'Confirmed', (b) => !isPast(b) && !b.auto],
   ['past', 'Harvested / gone', isPast],
 ];
+
+/** Remember that two bucks are different, so they aren't suggested as duplicates again. */
+async function markNotSame(aId, bId) {
+  const a = db.get('bucks', aId), b = db.get('bucks', bId);
+  if (!a || !b) return;
+  await db.putMany('bucks', [{ ...a, notSame: [...new Set([...(a.notSame || []), b.id])] }, { ...b, notSame: [...new Set([...(b.notSame || []), a.id])] }]);
+}
 
 /** Move every photo, suggestion and census check from one buck to another, then delete it. */
 async function mergeBucks(fromId, intoId) {
@@ -108,12 +116,12 @@ function dupesHTML() {
   return `<div class="bt-dupes"><div class="bt-dupes-head"><b>Possible duplicates</b> <small class="muted">checked ${esc(when)}</small></div>
     ${pairs.map((d) => { const k = db.get('bucks', d.keep), m = db.get('bucks', d.merge); const ids = [...photosOf(m.id), ...photosOf(k.id)].sort(byTime).map((p) => p.id); return `<div class="bt-dupe">
       <div class="bt-dupe-pair">
-        <figure>${thumb(buckRefIds(m)[0], 'bt-dupe-img', ids.join(','))}<figcaption><b>${esc(m.name)}</b><small>${plural(counts(m.id), 'photo')}${m.auto ? ' · 🤖' : ''}</small></figcaption></figure>
+        <figure data-compare="${esc(m.id)}:${esc(k.id)}" data-reason="${esc(d.reason)}" data-conf="${esc(d.confidence)}">${thumb(buckRefIds(m)[0], 'bt-dupe-img')}<figcaption><b>${esc(m.name)}</b><small>${plural(counts(m.id), 'photo')}${m.auto ? ' · 🤖' : ''}</small></figcaption></figure>
         <span class="bt-dupe-arrow">→</span>
-        <figure>${thumb(buckRefIds(k)[0], 'bt-dupe-img', ids.join(','))}<figcaption><b>${esc(k.name)}</b><small>${plural(counts(k.id), 'photo')}${k.auto ? ' · 🤖' : ''}</small></figcaption></figure>
+        <figure data-compare="${esc(m.id)}:${esc(k.id)}" data-reason="${esc(d.reason)}" data-conf="${esc(d.confidence)}">${thumb(buckRefIds(k)[0], 'bt-dupe-img')}<figcaption><b>${esc(k.name)}</b><small>${plural(counts(k.id), 'photo')}${k.auto ? ' · 🤖' : ''}</small></figcaption></figure>
       </div>
       <div class="small">${pill(d.confidence, d.confidence === 'high' ? 'good' : d.confidence === 'low' ? 'bad' : 'warn')} ${esc(d.reason)}</div>
-      <div class="bt-row"><button class="btn sm primary" data-dmerge="${esc(m.id)}:${esc(k.id)}">Merge as one buck</button><button class="btn sm" data-view="${esc(ids.join(','))}">Compare</button><button class="btn sm" data-dnot="${esc(m.id)}:${esc(k.id)}">Not the same</button></div>
+      <div class="bt-row"><button class="btn sm primary" data-dmerge="${esc(m.id)}:${esc(k.id)}">Merge as one buck</button><button class="btn sm" data-compare="${esc(m.id)}:${esc(k.id)}" data-reason="${esc(d.reason)}" data-conf="${esc(d.confidence)}">Compare</button><button class="btn sm" data-dnot="${esc(m.id)}:${esc(k.id)}">Not the same</button></div>
     </div>`; }).join('')}</div>`;
 }
 
@@ -167,7 +175,7 @@ function buckDetail(b) {
             <button class="btn sm primary" data-keep>✓ Same buck, keep</button>
             ${b.auto ? '<button class="btn sm" data-rename>Rename</button>' : ''}
           </div>
-          ${others.length ? `<div class="merge-row"><select data-merge-into><option value="">Merge into…</option>${others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select><button class="btn sm" data-merge>Merge</button></div>` : ''}
+          ${others.length ? `<div class="merge-row"><select data-merge-into><option value="">Merge into…</option>${others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select><button class="btn sm" data-compare-with>Compare</button><button class="btn sm" data-merge>Merge</button></div>` : ''}
           <button class="btn sm link" data-unsort>${b.auto ? 'Not one buck: undo this group' : 'Undo the auto-filed photos'}</button>
         </div>`;
       })()}
@@ -339,11 +347,19 @@ export function bindBucks(el, rerender, params) {
     await mergeBucks(from, into);
     toast(`Merged into ${db.get('bucks', into)?.name || b.name}`);
   }));
-  el.querySelectorAll('[data-dnot]').forEach((x) => x.addEventListener('click', async () => {
-    const [a, b] = x.dataset.dnot.split(':').map((id) => db.get('bucks', id));
-    if (!a || !b) return;
-    await db.putMany('bucks', [{ ...a, notSame: [...new Set([...(a.notSame || []), b.id])] }, { ...b, notSame: [...new Set([...(b.notSame || []), a.id])] }]);
-  }));
+  el.querySelectorAll('[data-dnot]').forEach((x) => x.addEventListener('click', () => markNotSame(...x.dataset.dnot.split(':'))));
+  // Side-by-side compare, with merge / not-the-same right there.
+  const compare = (a, b, reason = '', confidence = '') => openBuckCompare(a, b, {
+    reason, confidence,
+    onMerge: async (from, into) => { await mergeBucks(from, into); toast(`Merged into ${db.get('bucks', into)?.name || 'buck'}`); if (params.get('id') === from) location.hash = `#/bucks?id=${into}`; },
+    onNotSame: async (x, y) => { await markNotSame(x, y); toast('Marked as different bucks'); },
+  });
+  el.querySelectorAll('[data-compare]').forEach((x) => x.addEventListener('click', (e) => { e.preventDefault(); const [a, b] = x.dataset.compare.split(':'); compare(a, b, x.dataset.reason, x.dataset.conf); }));
+  el.querySelector('[data-compare-with]')?.addEventListener('click', () => {
+    const other = el.querySelector('[data-merge-into]')?.value;
+    if (!other) return toast('Pick a buck to compare with first');
+    compare(params.get('id'), other);
+  });
   el.querySelector('[data-add-buck]')?.addEventListener('click', () => openForm('bucks', null, { status: 'active' }));
   el.querySelector('[data-edit-buck]')?.addEventListener('click', (e) => openForm('bucks', db.get('bucks', e.currentTarget.dataset.editBuck)));
   el.querySelectorAll('[data-status]').forEach((x) => x.addEventListener('click', async () => {
