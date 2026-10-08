@@ -13,7 +13,7 @@ export function spotBoxes(p, { only = null, min = 2 } = {}) {
   if (!only && ids.length < min) return '';
   return ids.map((id, i) => {
     if (only && id !== only) return '';
-    const box = p.buckSpots?.[id]?.box;
+    const box = drawable(p.buckSpots?.[id]);
     if (!box) return '';
     const [x, y, w, h] = box.map((v) => `${(v * 100).toFixed(1)}%`);
     const name = db.get('bucks', id)?.name || 'Buck';
@@ -21,7 +21,17 @@ export function spotBoxes(p, { only = null, min = 2 } = {}) {
   }).join('');
 }
 /** Does this photo have outlines worth drawing? */
-export const hasSpots = (p, only = null) => photoBucks(p).filter((id) => (!only || id === only) && p.buckSpots?.[id]?.box).length > 0 && (only || photoBucks(p).length > 1);
+export const hasSpots = (p, only = null) => photoBucks(p).filter((id) => (!only || id === only) && drawable(p.buckSpots?.[id])).length > 0 && (only || photoBucks(p).length > 1);
+/** Boxes are drawn when you placed them or they came in the pixel format (bv 2);
+    older AI boxes measured height on the wrong scale and sat too high. */
+export const drawable = (spot) => (spot?.box && (spot.by === 'you' || spot.bv >= 2) ? spot.box : null);
+
+/** A box you set by tapping the buck at (fx, fy), 0–1 of the photo. Keeps the old size if there was one. */
+export function boxAt(fx, fy, old) {
+  const [w, h] = old?.box ? [old.box[2], old.box[3]] : [0.3, 0.4];
+  const x = Math.max(0, Math.min(1 - w, fx - w / 2)), y = Math.max(0, Math.min(1 - h, fy - h / 2));
+  return { where: fx < 0.38 ? 'left' : fx > 0.62 ? 'right' : 'middle', box: [x, y, w, h].map((v) => Math.round(v * 1000) / 1000), by: 'you', bv: 2 };
+}
 
 /** Size the overlay to the image's laid-out box (call on load and resize). */
 export function fitOverlay(img, overlay) {

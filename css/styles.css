@@ -618,3 +618,9 @@ dialog.bcmp:not([open]) { display: none; }
 .so-opt:has(input:disabled:not(:checked)) { opacity: .55; }
 .so-preview { font-size: 14px; background: color-mix(in srgb, var(--warn) 10%, var(--panel)); border-radius: 10px; padding: 10px; }
 .so .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+/* Placing a box by tapping */
+dialog.viewer.moving .v-stage { cursor: crosshair; outline: 3px dashed #F59E0B; outline-offset: -3px; }
+dialog.viewer.moving::after { content: attr(data-hint); position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 64px); transform: translateX(-50%); background: #F59E0B; color: #111; font-weight: 700; font-size: 14px; padding: 6px 14px; border-radius: 16px; z-index: 5; pointer-events: none; }
+.bcmp-fix { position: absolute; right: 44px; top: 6px; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 14px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+.bcmp-fix.on { background: #F59E0B; color: #111; font-weight: 700; }

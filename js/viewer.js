@@ -5,8 +5,8 @@
 import * as db from './db.js';
 import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
 import { relayPhotoBlob, relayConfigured, matchBuckPhoto } from './relay.js';
-import { cameraCensus, photoDeer, photoBucks, withBucks, bucksLabel, buckWhere } from './deer.js';
-import { spotBoxes, fitOverlay } from './spots.js';
+import { cameraCensus, photoDeer, photoBucks, withBucks, bucksLabel, buckWhere, normBox } from './deer.js';
+import { spotBoxes, fitOverlay, boxAt } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
@@ -15,6 +15,7 @@ const MAX_ZOOM = 6;
 export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   // Tag and buck pickers stay folded into one line until you ask for them.
   const open = { tags: false, bucks: false };
+  let moveFor = null; // a buck id while you're tapping to place his box
   ids = ids.filter(Boolean);
   if (!ids.length) return;
   let i = Math.min(Math.max(0, index), ids.length - 1);
@@ -107,7 +108,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       <div class="v-row">${bucks.map((b) => `<button type="button" class="v-tag ${mineIds.includes(b.id) ? 'on' : ''}" data-bk="${esc(b.id)}">${mineIds.includes(b.id) ? '✓ ' : ''}${esc(b.name)}</button>`).join('')}
         <button type="button" class="v-tag" data-bk-new>＋ New buck</button>
         ${bucks.length && relayConfigured() && !mineIds.length ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>
-      ${mineIds.length > 1 ? `<div class="v-places"><small>Which is which?</small>${mineIds.map((id) => `<div class="v-place"><b>${esc(db.get('bucks', id)?.name || 'Buck')}</b>${['left', 'middle', 'right', 'front', 'back'].map((w) => `<button type="button" class="v-tag ${buckWhere(p, id) === w ? 'on' : ''}" data-place="${esc(id)}:${w}">${w}</button>`).join('')}</div>`).join('')}</div>` : ''}
+      ${mineIds.length > 1 ? `<div class="v-places"><small>Which is which?</small>${mineIds.map((id) => `<div class="v-place"><b>${esc(db.get('bucks', id)?.name || 'Buck')}</b>${['left', 'middle', 'right', 'front', 'back'].map((w) => `<button type="button" class="v-tag ${buckWhere(p, id) === w ? 'on' : ''}" data-place="${esc(id)}:${w}">${w}</button>`).join('')}<button type="button" class="v-tag ${moveFor === id ? 'on' : ''}" data-move-box="${esc(id)}">📍 ${moveFor === id ? 'tap him…' : 'move box'}</button></div>`).join('')}</div>` : ''}
       ${mineIds.length ? `<div class="v-row">${mineIds.map((id) => { const b = db.get('bucks', id); const star = (b?.refs || []).includes(p.id); return `<button type="button" class="v-link" data-bk-star="${esc(id)}">${star ? '★' : '☆'} reference for ${esc(b?.name || 'buck')}</button>`; }).join('')}</div>` : ''}`;
   };
 
@@ -235,6 +236,17 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     const quickTap = g.moved < 10 && Date.now() - g.t0 < 350;
     const wasZoomed = g.from.s > 1.01;
     g = null;
+    if (quickTap && moveFor) {
+      // Placing a box: put it where you tapped on the photo.
+      const r = img.getBoundingClientRect();
+      const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+      const id = moveFor; moveFor = null; dlg.classList.remove('moving');
+      if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1) {
+        const ph = db.get('photos', ids[i]);
+        db.put('photos', { ...ph, buckSpots: { ...(ph.buckSpots || {}), [id]: boxAt(fx, fy, ph.buckSpots?.[id]) } }).then(renderInfo);
+      } else renderInfo();
+      return;
+    }
     if (quickTap) {
       const now = Date.now();
       if (now - lastTap.t < 320 && Math.hypot(p.x - lastTap.x, p.y - lastTap.y) < 30) {
@@ -267,6 +279,14 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       // Next photo in a burst that still needs a look.
       const k = ids.findIndex((id, j) => j > i && needsReview(db.get('photos', id)));
       if (k > 0) setTimeout(() => show(k), 350);
+      return;
+    }
+    const mv = e.target.closest('[data-move-box]');
+    if (mv) {
+      moveFor = moveFor === mv.dataset.moveBox ? null : mv.dataset.moveBox;
+      dlg.classList.toggle('moving', !!moveFor);
+      dlg.dataset.hint = moveFor ? `Tap ${db.get('bucks', moveFor)?.name || 'the buck'} in the photo` : '';
+      renderInfo();
       return;
     }
     const pl = e.target.closest('[data-place]');
@@ -305,7 +325,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
         const id = bk.dataset.bk;
         await db.put('photos', tagged({ ...withBucks(p, cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]), buckAuto: false }));
       } else if (bk.hasAttribute('data-bk-ok')) await db.put('photos', { ...p, buckAuto: false });
-      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...withBucks(p, [...cur, p.buckAI.match]), buckAuto: false, ...(p.buckAI.where || p.buckAI.box ? { buckSpots: { ...(p.buckSpots || {}), [p.buckAI.match]: { where: p.buckAI.where || '', box: p.buckAI.box || null, by: 'ai' } } } : {}) }));
+      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...withBucks(p, [...cur, p.buckAI.match]), buckAuto: false, ...(p.buckAI.where || p.buckAI.box ? { buckSpots: { ...(p.buckSpots || {}), [p.buckAI.match]: { where: p.buckAI.where || '', box: normBox(p.buckAI.box), bv: p.buckAI.box_v || p.buckAI.bv || 0, by: 'ai' } } } : {}) }));
       else if (bk.hasAttribute('data-bk-no')) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
       else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...withBucks(p, []), buckAuto: false });
       else if (bk.hasAttribute('data-bk-new')) {

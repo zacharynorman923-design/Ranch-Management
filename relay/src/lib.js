@@ -84,6 +84,25 @@ export function fixRanchCoords(latIn, lonIn, tz = 'America/Chicago') {
   return { lat, lon, fixed };
 }
 
+/**
+ * A box the model gave as [left, top, right, bottom] in pixels of a photo of
+ * size w × h → [x, y, width, height] in 0–1000 of that photo's own width and
+ * height. Each axis is scaled by its own side, so a wide photo's boxes don't
+ * drift up. Returns null for anything unusable.
+ */
+export function pixelBoxToNorm(box, w, h) {
+  const W = Number(w), H = Number(h);
+  if (!Array.isArray(box) || box.length !== 4 || !(W > 0) || !(H > 0)) return null;
+  let [l, t, r, b] = box.map(Number);
+  if (![l, t, r, b].every(Number.isFinite)) return null;
+  if (r < l) [l, r] = [r, l];
+  if (b < t) [t, b] = [b, t];
+  const cl = (v, max) => Math.max(0, Math.min(max, v));
+  l = cl(l, W); r = cl(r, W); t = cl(t, H); b = cl(b, H);
+  if (r - l < W * 0.02 || b - t < H * 0.02) return null;
+  return [l / W, t / H, (r - l) / W, (b - t) / H].map((v) => Math.round(v * 1000));
+}
+
 /** Open-Meteo daily JSON → [{ date, inches }], dropping days it has no value for. */
 export function openMeteoDaily(json) {
   const t = json?.daily?.time || [];
