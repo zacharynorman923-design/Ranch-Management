@@ -388,7 +388,7 @@ export function bucksLabel(p, nameOf) {
 
 /* ------------------------------- start over -------------------------------- */
 /** Photo fields the buck tracker and census write (what a reset clears and an undo restores). */
-export const BUCK_FIELDS = ['buck', 'bucks', 'buckAuto', 'buckSortAt', 'buckAI', 'buckRack', 'buckSpots', 'buckVia', 'review', 'counts'];
+export const BUCK_FIELDS = ['buck', 'bucks', 'buckAuto', 'buckSortAt', 'buckAI', 'buckRack', 'buckSpots', 'buckVia', 'buckSortClaim', 'review', 'counts'];
 
 /**
  * What a "start over" removes.
@@ -408,7 +408,7 @@ export function planReset(bucks, photos, { confirmed = false, reviews = false } 
     const keep = p.buckAuto ? [] : photoBucks(p).filter((id) => !gone.has(id));
     if (keep.length !== photoBucks(p).length) Object.assign(patch, { buck: keep[0] || '', bucks: keep });
     if (p.buckAuto) patch.buckAuto = false;
-    for (const k of ['buckSortAt', 'buckAI', 'buckRack', 'buckVia']) if (p[k] != null && p[k] !== '') patch[k] = null;
+    for (const k of ['buckSortAt', 'buckAI', 'buckRack', 'buckVia', 'buckSortClaim']) if (p[k] != null && p[k] !== '') patch[k] = null;
     if (p.buckSpots) {
       const spots = Object.fromEntries(Object.entries(p.buckSpots).filter(([id, s]) => s.by === 'you' && keep.includes(id)));
       if (Object.keys(spots).length !== Object.keys(p.buckSpots).length) patch.buckSpots = Object.keys(spots).length ? spots : null;

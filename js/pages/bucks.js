@@ -64,6 +64,7 @@ function summaryPanel() {
       ${unidentified.length ? `<button class="btn" data-view="${esc(unidentified.map((p) => p.id).join(','))}">🔍 Identify ${unidentified.length}</button>` : ''}
       ${can && db.all('photos').some((p) => p.buckSortAt && !D.photoBucks(p).length) ? '<button class="btn" data-sort-again>↻ Retry unsure</button>' : ''}
     </div>
+    ${can && last?.stopped && unsorted.length ? `<p class="note warn small">Last auto-sort stopped: ${esc(last.stopped)}. It tries again on the next sync, or tap Sort.</p>` : ''}
     ${!can ? '<p class="note warn small">Auto-sort needs the relay updated: re-run <b>Deploy relay</b> in GitHub Actions, then sync.</p>' : ''}
     <details class="lines bt-how"><summary class="small">${last ? `Last auto-sort ${esc(new Date(last.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}: ${last.sorted} looked at, ${last.filed} filed, ${plural(last.newBucks, 'new buck')}` : 'How auto-sort works'}</summary>
       <p class="small">When the app syncs, the AI looks at new buck photos together, files the ones it recognizes under your bucks, and starts a new buck (named for his rack) for each one it hasn't seen. Anything it files is marked 🤖 until you check it. Photos it can't place (rack not visible, too close to call) stay under <b>unidentified</b>.</p>
@@ -312,9 +313,10 @@ export function bindBucks(el, rerender, params) {
     if (p) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
   }));
   el.querySelectorAll('[data-sort-now]').forEach((x) => x.addEventListener('click', async (e) => {
-    const btn = e.currentTarget; btn.disabled = true; btn.textContent = '🤖 Sorting…';
-    try { const r = await sortPendingBucks({ batches: 6 }); toast(r ? `Sorted ${r.sorted}: ${r.filed} filed, ${r.newBucks} new buck${r.newBucks === 1 ? '' : 's'}` : 'Auto-sort isn\'t available yet'); }
-    catch (err) { toast(`Couldn't sort: ${err.message}`); btn.disabled = false; }
+    const btn = e.currentTarget, was = btn.innerHTML; btn.disabled = true; btn.textContent = '🤖 Sorting…';
+    try { const r = await sortPendingBucks({ batches: 6 }); toast(!r ? 'Auto-sort isn\'t available yet' : r.stopped && !r.sorted ? `Couldn't sort: ${r.stopped}` : `Sorted ${r.sorted}: ${r.filed} filed, ${r.newBucks} new buck${r.newBucks === 1 ? '' : 's'}${r.stopped ? ` (stopped: ${r.stopped})` : ''}`); }
+    catch (err) { toast(`Couldn't sort: ${err.message}`); }
+    btn.disabled = false; btn.innerHTML = was;
   }));
   el.querySelector('[data-sort-again]')?.addEventListener('click', async () => {
     const ids = db.all('photos').filter((p) => p.buckSortAt && !D.photoBucks(p).length);

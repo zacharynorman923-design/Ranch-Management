@@ -16,11 +16,17 @@ let running = null;
 
 export const relayConfigured = () => { const s = db.settings(); return !!(s.relayUrl && s.relayToken); };
 
-async function call(path, { as = 'json', method = 'GET', body } = {}) {
+async function call(path, { as = 'json', method = 'GET', body, timeout = 90_000 } = {}) {
   const s = db.settings();
   const base = String(s.relayUrl).trim().replace(/\/+$/, '');
   const headers = { Authorization: `Bearer ${String(s.relayToken).trim()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) };
-  const r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  // A request cut off when the phone sleeps or the app is switched away can
+  // otherwise hang forever; give up after `timeout` so the next try can start.
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), timeout);
+  let r;
+  try { r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: ctl.signal }); }
+  catch (err) { if (err.name === 'AbortError') throw Object.assign(new Error('The relay took too long to answer'), { timeout: true }); throw err; }
+  finally { clearTimeout(timer); }
   if (r.status === 401) throw Object.assign(new Error('Relay rejected the token. Check it matches RELAY_TOKEN'), { auth: true });
   if (!r.ok) {
     const msg = await r.json().then((j) => j.error).catch(() => '');
@@ -257,10 +263,16 @@ export async function matchBuckPhoto(id, roster = null) {
 }
 /* ----------------------------- auto-sort bucks ---------------------------- */
 const SORT_BATCH = 10;
+/* Photos out with the AI right now are claimed, so a second sort (another tab,
+   or one started while the first was stuck) never sends them again. A claim
+   lapses on its own after a few minutes in case the sort that made it died. */
+const SORT_CLAIM_MS = 4 * 60_000;
+const claimed = (p) => p.buckSortClaim && Date.now() - Date.parse(p.buckSortClaim) < SORT_CLAIM_MS;
+const unclaim = (ids) => db.putMany('photos', ids.map((id) => db.get('photos', id)).filter((p) => p?.buckSortClaim).map(({ buckSortClaim, ...p }) => p));
 /** Buck photos nobody has sorted yet (newest first). */
 export function unsortedBuckPhotos({ all = false } = {}) {
   const since = C.addDays(C.today(), -60);
-  return db.all('photos').filter((p) => !photoBucks(p).length && (all || !p.buckSortAt) && p.date >= since && photoTags(p).includes('buck'))
+  return db.all('photos').filter((p) => !photoBucks(p).length && (all || !p.buckSortAt) && !claimed(p) && p.date >= since && photoTags(p).includes('buck'))
     .sort((a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1));
 }
 /**
@@ -273,10 +285,14 @@ export function sortPendingBucks(opts = {}) {
   if (!db.settings().relayInfo?.sources?.buckSort) return Promise.resolve(null);
   // One sort at a time: two at once would each send the same unsorted photos
   // and each make its own new buck from them, so one picture ends up as two
-  // bucks. A second call (the 15-minute sync, a button, another tab) waits for
-  // the running one and gets its result; another tab skips its turn.
-  sorting ||= (navigator.locks ? navigator.locks.request('ranch-buck-sort', { ifAvailable: true }, (lock) => (lock ? runSort(opts) : null)) : runSort(opts)).finally(() => { sorting = null; });
-  return sorting;
+  // bucks. A second call (the sync, a button) gets the running sort's result —
+  // unless that one has been going so long it must be stuck; then it starts
+  // fresh (the photo claims keep the two apart).
+  if (!sorting || Date.now() - sorting.at > SORT_CLAIM_MS) {
+    const run = runSort(opts).finally(() => { if (sorting?.run === run) sorting = null; });
+    sorting = { run, at: Date.now() };
+  }
+  return sorting.run;
 }
 async function runSort({ batches = 2, all = false } = {}) {
   const out = { sorted: 0, filed: 0, suggested: 0, newBucks: 0 };
@@ -295,8 +311,16 @@ async function runSort({ batches = 2, all = false } = {}) {
       notes.push([db.get('devices', p.device)?.name, p.date, p.time].filter(Boolean).join(' '));
     }
     if (!photos.length) continue;
+    const claim = new Date().toISOString();
+    await db.putMany('photos', ids.map((id) => ({ ...db.get('photos', id), buckSortClaim: claim })));
     let r;
-    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes, sizes, visits } }); } catch (err) { if (err.status === 429 || err instanceof TypeError) break; throw err; }
+    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes, sizes, visits }, timeout: 150_000 }); }
+    catch (err) {
+      await unclaim(ids);
+      // Out of AI for today, offline, or it timed out: stop here and say why; the next sync tries again.
+      if (err.status === 429 || err.timeout || err instanceof TypeError) { out.stopped = err instanceof TypeError ? 'No connection to the relay' : err.message; break; }
+      throw err;
+    }
     const plan = planBuckSort(r.result, ids, roster.map((b) => b.id));
     const now = new Date().toISOString();
     const names = new Set(db.all('bucks').map((b) => String(b.name).toLowerCase()));
@@ -313,7 +337,8 @@ async function runSort({ batches = 2, all = false } = {}) {
     }
     const writes = ids.map((id) => {
       const p = db.get('photos', id);
-      const w = { ...p, buckSortAt: now, ...(plan.rack[id] ? { buckRack: cleanRack(plan.rack[id]) } : {}) };
+      const { buckSortClaim, ...rest } = p;
+      const w = { ...rest, buckSortAt: now, ...(plan.rack[id] ? { buckRack: cleanRack(plan.rack[id]) } : {}) };
       // Every buck the AI found in this photo: named ones and new groups.
       const found = [...plan.assign.filter((x) => x.id === id).map((x) => x.buck), ...plan.newBucks.filter((x) => x.photoIds.includes(id)).map((x) => newId[x.group])];
       const sgt = plan.suggest.find((x) => x.id === id);
