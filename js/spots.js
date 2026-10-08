@@ -33,6 +33,29 @@ export function boxAt(fx, fy, old) {
   return { where: fx < 0.38 ? 'left' : fx > 0.62 ? 'right' : 'middle', box: [x, y, w, h].map((v) => Math.round(v * 1000) / 1000), by: 'you', bv: 2 };
 }
 
+/* Boxes on or off: one switch for every photo screen (viewer, compare, census
+   review), remembered on this phone. Off hides the outlines so they never
+   cover the antlers; the left/right notes stay. */
+export const boxesOff = () => !!db.settings().hideBoxes;
+const syncBoxes = () => document.documentElement.classList.toggle('no-spots', boxesOff());
+const toggleLabel = () => (boxesOff() ? '▢ Show boxes' : '▣ Hide boxes');
+/** The on/off button for a photo, or '' when it has no boxes to show. extra: more classes. */
+export function boxToggle(p, { only = null, extra = '' } = {}) {
+  syncBoxes();
+  if (!p || !hasSpots(p, only)) return '';
+  return `<button type="button" class="box-toggle ${extra}" data-box-toggle aria-pressed="${!boxesOff()}">${toggleLabel()}</button>`;
+}
+/** Turn boxes back on (when you're about to place one). */
+export async function showBoxes() { if (boxesOff()) { await db.saveSettings({ hideBoxes: false }); syncBoxes(); } }
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-box-toggle]');
+  if (!b) return;
+  e.stopPropagation();
+  await db.saveSettings({ hideBoxes: !boxesOff() });
+  syncBoxes();
+  document.querySelectorAll('[data-box-toggle]').forEach((x) => { x.textContent = toggleLabel(); x.setAttribute('aria-pressed', String(!boxesOff())); });
+}, true);
+
 /** Size the overlay to the image's laid-out box (call on load and resize). */
 export function fitOverlay(img, overlay) {
   if (!img || !overlay) return;

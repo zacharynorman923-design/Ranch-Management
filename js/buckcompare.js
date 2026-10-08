@@ -5,7 +5,7 @@ import * as db from './db.js';
 import { photoURL } from './photos.js';
 import { photoBucks } from './deer.js';
 import { openViewer } from './viewer.js';
-import { spotBoxes, fitOverlay, placeLine, boxAt } from './spots.js';
+import { spotBoxes, fitOverlay, placeLine, boxAt, boxToggle, showBoxes } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const byTime = (a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1);
@@ -40,6 +40,7 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
           <button type="button" class="bcmp-nav next" data-step="${k}:1" ${s.at === s.ids.length - 1 ? 'disabled' : ''} aria-label="Next">›</button>` : ''}
         <button type="button" class="bcmp-zoom" data-zoom="${k}" aria-label="Zoom">🔍</button>
         ${p && photoBucks(p).length > 1 ? `<button type="button" class="bcmp-fix ${fixing === k ? 'on' : ''}" data-fix-box="${k}">${fixing === k ? `Tap ${esc(s.buck.name)}…` : '📍 Box off?'}</button>` : ''}
+        ${boxToggle(p, { only: s.id, extra: 'bcmp-boxes' })}
         ${p ? `<span class="bcmp-when">${esc([p.date, p.time, cam(p)].filter(Boolean).join(' · '))}</span>` : ''}
         ${p && photoBucks(p).length > 1 ? `<span class="bcmp-which">${esc(placeLine(p, s.id) || `${s.buck.name} is one of ${photoBucks(p).length} bucks here`)}</span>` : ''}
       </div>
@@ -77,7 +78,7 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
     if (t.hasAttribute('data-x')) return close();
     if (t.dataset.step) { const [k, d] = t.dataset.step.split(':').map(Number); return step(k, d); }
     if (t.dataset.pick) { const [k, i] = t.dataset.pick.split(':').map(Number); sides[k].at = i; return render(); }
-    if (t.dataset.fixBox != null) { const k = Number(t.dataset.fixBox); fixing = fixing === k ? null : k; return render(); }
+    if (t.dataset.fixBox != null) { const k = Number(t.dataset.fixBox); fixing = fixing === k ? null : k; if (fixing != null) await showBoxes(); return render(); }
     if (t.dataset.zoom != null) { const s = sides[Number(t.dataset.zoom)]; return openViewer(s.ids, s.at); }
     if (t.hasAttribute('data-merge')) {
       if (!confirm(`Merge ${sides[0].buck.name} into ${sides[1].buck.name}? All of ${sides[0].buck.name}'s photos move to ${sides[1].buck.name}.`)) return;
