@@ -181,7 +181,7 @@ export function cameraCensus({ photos, uniqueBucks, days, acres, gapMin = 0 }) {
  */
 export function planBuckSort(result, photoIds, existingIds) {
   const known = new Set(existingIds);
-  const out = { assign: [], suggest: [], newBucks: [], rack: {} };
+  const out = { assign: [], suggest: [], newBucks: [], rack: {}, spots: {} };
   const groups = new Map();
   for (const p of result?.photos || []) {
     const id = photoIds[p.photo - 1];
@@ -192,6 +192,8 @@ export function planBuckSort(result, photoIds, existingIds) {
     if (racks.length) out.rack[id] = racks.join(' + ');
     if (p.antlers_visible === false) continue;
     for (const b of entries) {
+      // Where each buck is in the frame, so a photo with two bucks says which is which.
+      if (b.group && b.group !== 'unsure' && (b.where || b.box)) (out.spots[id] ||= {})[b.group] = { where: String(b.where || '').trim(), box: normBox(b.box) };
       if (b.group === 'unsure' || b.confidence === 'low') continue;
       if (known.has(b.group)) (b.confidence === 'high' ? out.assign : out.suggest).push({ id, buck: b.group, confidence: b.confidence });
       else if (/^new\d+$/.test(b.group)) groups.set(b.group, [...new Set([...(groups.get(b.group) || []), id])]);
@@ -241,4 +243,29 @@ export function planDedupe(duplicates, bucks, photoCount = () => 0) {
   }
   const order = { high: 0, medium: 1, low: 2 };
   return out.sort((a, b) => order[a.confidence] - order[b.confidence]);
+}
+
+/* ------------------------- which buck is where ---------------------------
+   p.buckSpots = { [buckId]: { where: 'left', box: [x, y, w, h] (0–1), by: 'ai' | 'you' } } */
+/** The AI's [x, y, w, h] in 0–1000 → 0–1, or null if it isn't a usable box. */
+export function normBox(box) {
+  if (!Array.isArray(box) || box.length !== 4 || !box.every((v) => Number.isFinite(Number(v)))) return null;
+  let [x, y, w, h] = box.map(Number);
+  const scale = Math.max(x + w, y + h) > 1.5 ? 1000 : 1;
+  [x, y, w, h] = [x, y, w, h].map((v) => v / scale);
+  x = Math.max(0, Math.min(1, x)); y = Math.max(0, Math.min(1, y));
+  w = Math.min(1 - x, w); h = Math.min(1 - y, h);
+  return w > 0.02 && h > 0.02 ? [x, y, w, h].map((v) => Math.round(v * 1000) / 1000) : null;
+}
+/** Short place word for a buck in a photo ("left"), from the saved spot or the box. */
+export function buckWhere(p, id) {
+  const s = p?.buckSpots?.[id];
+  if (s?.where) return s.where;
+  if (s?.box) { const cx = s.box[0] + s.box[2] / 2; return cx < 0.38 ? 'left' : cx > 0.62 ? 'right' : 'middle'; }
+  return '';
+}
+/** "Big 8 (left) + Tall 10 (right)" — places only when there's more than one buck. */
+export function bucksLabel(p, nameOf) {
+  const ids = photoBucks(p);
+  return ids.map((id) => { const w = ids.length > 1 ? buckWhere(p, id) : ''; return `${nameOf(id)}${w ? ` (${w})` : ''}`; }).join(' + ');
 }

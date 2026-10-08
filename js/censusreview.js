@@ -7,6 +7,7 @@ import * as C from './calc.js';
 import * as D from './deer.js';
 import { photoURL } from './photos.js';
 import { openViewer } from './viewer.js';
+import { spotBoxes, fitOverlay } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const KINDS = [['buck', 'Bucks', '🦌'], ['doe', 'Does', '🦌'], ['fawn', 'Fawns', '🦌']];
@@ -91,7 +92,7 @@ export function openCensusReview({ filter = 'todo' } = {}) {
     const aiBuck = v.ids.map((id) => db.get('photos', id)?.buckAI).find((x) => x && db.get('bucks', x.match));
     dlg.innerHTML = `${head}
       <div class="cr-photo" data-swipe>
-        <img data-img alt="Camera photo">
+        <img data-img alt="Camera photo"><div class="spots" data-ov>${spotBoxes(p)}</div>
         <button type="button" class="cr-zoom" data-zoom aria-label="Zoom">🔍 Zoom</button>
         ${v.reviewed ? '<span class="cr-badge ok">✓ checked</span>' : `<span class="cr-badge">AI: ${esc(said(ai))}</span>`}
       </div>
@@ -112,7 +113,7 @@ export function openCensusReview({ filter = 'todo' } = {}) {
         </div>
         ${draft.counts.buck ? `<div class="cr-bucks"><div class="cr-q">Which buck${draft.counts.buck > 1 ? 's' : ''}? <small>Tap every buck in the visit${draft.bucks.length ? ` · ${draft.bucks.length} of ${draft.counts.buck} named` : ''}</small></div>
           <div class="cr-chips">${aiBuck && !draft.bucks.includes(aiBuck.match) ? `<button type="button" class="cr-chip ai" data-buck="${esc(aiBuck.match)}">🤖 ${esc(db.get('bucks', aiBuck.match).name)}?</button>` : ''}
-            ${bucks.map((b) => `<button type="button" class="cr-chip ${draft.bucks.includes(b.id) ? 'on' : ''}" data-buck="${esc(b.id)}">${draft.bucks.includes(b.id) ? '✓ ' : ''}${esc(b.name)}</button>`).join('')}
+            ${bucks.map((b) => `<button type="button" class="cr-chip ${draft.bucks.includes(b.id) ? 'on' : ''}" data-buck="${esc(b.id)}">${draft.bucks.includes(b.id) ? '✓ ' : ''}${esc(b.name)}${draft.bucks.includes(b.id) && draft.bucks.length > 1 && D.buckWhere(p, b.id) ? ` · ${esc(D.buckWhere(p, b.id))}` : ''}</button>`).join('')}
             <button type="button" class="cr-chip" data-newbuck>＋ New buck</button>
             <button type="button" class="cr-chip ${draft.bucks.length ? '' : 'on'}" data-nobuck>${draft.bucks.length ? 'Clear' : "Can't tell"}</button></div></div>` : ''}
       </div>
@@ -121,6 +122,7 @@ export function openCensusReview({ filter = 'todo' } = {}) {
         <button type="button" class="btn" data-skip>Skip</button>
         <button type="button" class="btn primary cr-ok" data-ok>✓ ${esc(said(draft.counts))} · next</button>
       </footer>`;
+    fitOverlay(dlg.querySelector('[data-img]'), dlg.querySelector('[data-ov]'));
     photoURL(p.id).then((u) => { const img = dlg.querySelector('[data-img]'); if (img) img.src = u || ''; });
     dlg.querySelectorAll('.cr-thumb img[data-pid]').forEach(async (img) => { img.src = (await photoURL(img.dataset.pid)) || ''; });
   };

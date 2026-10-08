@@ -590,3 +590,17 @@ dialog.bcmp:not([open]) { display: none; }
 .bcmp-foot { flex: none; display: flex; gap: 8px; padding: 8px 12px calc(env(safe-area-inset-bottom) + 10px); }
 .bcmp-foot .btn { flex: 1; padding: 12px; font-size: 15px; }
 .merge-row { flex-wrap: wrap; }
+
+/* Who's who outlines */
+.spots { position: absolute; pointer-events: none; transform-origin: center center; }
+.spot { position: absolute; border: 2px solid var(--c, #F59E0B); border-radius: 6px; box-shadow: 0 0 0 1px rgba(0,0,0,.45); }
+.spot span { position: absolute; left: -2px; top: -1.6em; font-size: 12px; font-weight: 700; line-height: 1.3; padding: 1px 6px; border-radius: 4px; background: var(--c, #F59E0B); color: #111; white-space: nowrap; }
+.spot.low span { top: auto; bottom: -1.6em; }
+
+.v-places { display: flex; flex-direction: column; gap: 4px; }
+.v-place { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.v-place b { min-width: 70px; font-size: 13px; }
+.v-place .v-tag { padding: 3px 9px; font-size: 12px; }
+
+.bcmp-which { position: absolute; left: 6px; top: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 10px; background: #F59E0B; color: #111; max-width: calc(100% - 50px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cr-photo { position: relative; }

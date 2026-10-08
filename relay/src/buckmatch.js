@@ -12,6 +12,7 @@ You are given reference photos of bucks the owner has already named, then one ne
 Compare the antlers first: number of points per side, brow tines, drop tines, kickers or stickers, split or forked tines, main-beam curve, inside spread relative to the ears (about 15 in ear tip to ear tip), tine length and mass, and left/right asymmetry. Then body: size, neck, face markings, scars, torn ears.
 Camera angle changes how a rack looks (head-on hides points; profile hides spread), and infrared night photos lose detail. Racks shed in late winter and regrow each summer, so velvet or a new year's rack can differ from last year's references.
 Lighting, fog, mist, rain, dust, night/infrared (black-and-white), blur, distance, camera angle, which camera or feeder, and time of day are NOT differences between bucks. The same buck at night and in daylight, or in fog and in sun, is the same buck: never treat those as distinguishing features, never split a buck into separate groups because of them, and never mention them in a name or rack description.
+When a photo has more than one buck, say which one you mean every time: give each buck's place in the frame ("left", "right, in front") and a rough box around him, and keep the descriptions for different bucks apart.
 Only say a named buck when specific features match and none contradict. If the rack can't be seen clearly, answer "unsure". Never guess to fill a slot; a wrong match is worse than "unsure".`;
 
 export async function matchBuck(env, body) {
@@ -35,7 +36,7 @@ export async function matchBuck(env, body) {
   const schema = {
     type: 'object',
     additionalProperties: false,
-    required: ['antlers_visible', 'rack', 'compared', 'match', 'confidence', 'reason'],
+    required: ['antlers_visible', 'rack', 'where', 'box', 'compared', 'match', 'confidence', 'reason'],
     properties: {
       antlers_visible: { type: 'boolean', description: 'Whether the new photo shows antlers clearly enough to compare.' },
       rack: { type: 'string', description: 'The new photo\'s rack in a few words, e.g. "main-frame 8, split left brow, drop tine on right beam, ~16 in spread".' },
@@ -43,6 +44,8 @@ export async function matchBuck(env, body) {
       match: { type: 'string', enum: [...bucks.map((b) => b.id), 'new', 'unsure'] },
       confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
       reason: { type: 'string', description: 'One short line for the owner, e.g. "Same split left brow and right drop tine as Big 8".' },
+      where: { type: 'string', description: 'Where this buck is in the photo, in a few words a person would use: "left", "right, in front", "center, behind the feeder", "far back left".' },
+      box: { type: 'array', items: { type: 'integer' }, description: 'Rough box around this buck as [x, y, width, height], each 0–1000 of the image width/height, from the top-left corner.' },
     },
   };
   const content = [{ type: 'text', text: `Named bucks (${bucks.length}), with reference photos:` }];
@@ -52,7 +55,7 @@ export async function matchBuck(env, body) {
   }
   content.push({ type: 'text', text: `New photo${body.note ? ` (${String(body.note).slice(0, 200)})` : ''}:` });
   content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } });
-  content.push({ type: 'text', text: 'Is the buck in the new photo one of the named bucks (answer with its id), a new buck ("new"), or can you not tell ("unsure")?' });
+  content.push({ type: 'text', text: 'Is the buck in the new photo one of the named bucks (answer with its id), a new buck ("new"), or can you not tell ("unsure")? If the photo has several bucks, answer for the clearest one and say where he is.' });
 
   const model = env.BUCK_MATCH_MODEL || 'claude-opus-5';
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 90_000, maxRetries: 1 });
@@ -180,9 +183,11 @@ export async function sortBucks(env, body) {
               items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['rack', 'group', 'confidence'],
+                required: ['rack', 'where', 'box', 'group', 'confidence'],
                 properties: {
                   rack: { type: 'string', description: 'The rack in a few words, e.g. "main-frame 8, split left brow, ~16 in".' },
+                  where: { type: 'string', description: 'Where this buck is in the photo, in a few words a person would use: "left", "right, in front", "center, behind the feeder", "far back left".' },
+                  box: { type: 'array', items: { type: 'integer' }, description: 'Rough box around this buck as [x, y, width, height], each 0–1000 of the image width/height, from the top-left corner.' },
                   group: { type: 'string', enum: groups },
                   confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
                 },

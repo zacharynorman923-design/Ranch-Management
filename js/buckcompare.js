@@ -5,6 +5,7 @@ import * as db from './db.js';
 import { photoURL } from './photos.js';
 import { photoBucks } from './deer.js';
 import { openViewer } from './viewer.js';
+import { spotBoxes, fitOverlay, placeLine } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const byTime = (a, b) => (`${a.date} ${a.time || ''}` < `${b.date} ${b.time || ''}` ? 1 : -1);
@@ -34,11 +35,12 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
       <div class="bcmp-label"><b>${esc(s.buck.name)}</b>${s.buck.auto ? ' <span class="bcmp-auto">🤖</span>' : ''}
         <small>${s.ids.length ? `${s.at + 1} / ${s.ids.length}` : 'no photos'}</small></div>
       <div class="bcmp-photo" data-swipe="${k}">
-        <img data-main="${k}" alt="${esc(s.buck.name)}">
+        <img data-main="${k}" alt="${esc(s.buck.name)}"><div class="spots" data-ov="${k}">${p ? spotBoxes(p, { only: s.id }) : ''}</div>
         ${s.ids.length > 1 ? `<button type="button" class="bcmp-nav prev" data-step="${k}:-1" ${s.at === 0 ? 'disabled' : ''} aria-label="Previous">‹</button>
           <button type="button" class="bcmp-nav next" data-step="${k}:1" ${s.at === s.ids.length - 1 ? 'disabled' : ''} aria-label="Next">›</button>` : ''}
         <button type="button" class="bcmp-zoom" data-zoom="${k}" aria-label="Zoom">🔍</button>
         ${p ? `<span class="bcmp-when">${esc([p.date, p.time, cam(p)].filter(Boolean).join(' · '))}</span>` : ''}
+        ${p && photoBucks(p).length > 1 ? `<span class="bcmp-which">${esc(placeLine(p, s.id) || `${s.buck.name} is one of ${photoBucks(p).length} bucks here`)}</span>` : ''}
       </div>
       ${s.ids.length > 1 ? `<div class="bcmp-strip">${s.ids.map((id, i) => `<button type="button" class="bcmp-thumb ${i === s.at ? 'on' : ''}" data-pick="${k}:${i}"><img data-pid="${esc(id)}" alt=""></button>`).join('')}</div>` : ''}
     </section>`;
@@ -54,7 +56,12 @@ export function openBuckCompare(a, b, { reason = '', confidence = '', onMerge, o
         ${onNotSame ? '<button type="button" class="btn" data-not>Not the same</button>' : ''}
         ${onMerge ? `<button type="button" class="btn primary" data-merge>Merge as one buck</button>` : ''}
       </footer>`;
-    sides.forEach((s, k) => { const id = s.ids[s.at]; if (id) photoURL(id).then((u) => { const im = dlg.querySelector(`[data-main="${k}"]`); if (im) im.src = u || ''; }); });
+    sides.forEach((s, k) => {
+      const id = s.ids[s.at];
+      const im = dlg.querySelector(`[data-main="${k}"]`);
+      fitOverlay(im, dlg.querySelector(`[data-ov="${k}"]`));
+      if (id) photoURL(id).then((u) => { if (im) im.src = u || ''; });
+    });
     dlg.querySelectorAll('.bcmp-thumb img[data-pid]').forEach(async (im) => { im.src = (await photoURL(im.dataset.pid)) || ''; });
     // Keep the chosen thumbnail in view.
     dlg.querySelectorAll('.bcmp-thumb.on').forEach((t) => t.scrollIntoView({ block: 'nearest', inline: 'center' }));

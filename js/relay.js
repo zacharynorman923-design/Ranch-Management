@@ -305,7 +305,15 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
       const found = [...plan.assign.filter((x) => x.id === id).map((x) => x.buck), ...plan.newBucks.filter((x) => x.photoIds.includes(id)).map((x) => newId[x.group])];
       const sgt = plan.suggest.find((x) => x.id === id);
       if (found.length) { Object.assign(w, withBucks(w, [...photoBucks(w), ...found])); w.buckAuto = true; out.filed++; }
-      else if (sgt) { w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', at: now }; out.suggested++; }
+      else if (sgt) { const sp = plan.spots[id]?.[sgt.buck]; w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', where: sp?.where || '', box: sp?.box || null, at: now }; out.suggested++; }
+      // Where each buck is in this photo (keeps places you set yourself).
+      const spots = plan.spots[id] || {};
+      for (const [group, spot] of Object.entries(spots)) {
+        const bid = newId[group] || group;
+        if (!db.get('bucks', bid) && !newId[group]) continue;
+        if (w.buckSpots?.[bid]?.by === 'you') continue;
+        w.buckSpots = { ...(w.buckSpots || {}), [bid]: { ...spot, where: cleanRack(spot.where), by: 'ai' } };
+      }
       return w;
     });
     await db.putMany('photos', writes);

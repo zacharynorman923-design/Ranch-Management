@@ -451,7 +451,7 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   const sent = [];
   const reply = {
     photos: [
-      { photo: 1, antlers_visible: true, bucks: [{ rack: 'main-frame 8, split brow', group: 'b1', confidence: 'high' }, { rack: 'tall 10', group: 'new1', confidence: 'high' }] },
+      { photo: 1, antlers_visible: true, bucks: [{ rack: 'main-frame 8, split brow', where: 'left', box: [40, 300, 380, 500], group: 'b1', confidence: 'high' }, { rack: 'tall 10', where: 'right, behind', box: [560, 250, 300, 450], group: 'new1', confidence: 'high' }] },
       { photo: 2, antlers_visible: true, bucks: [{ rack: 'tall 10', group: 'new1', confidence: 'high' }] },
       { photo: 3, antlers_visible: true, bucks: [{ rack: 'tall 10', group: 'new1', confidence: 'medium' }] },
       { photo: 4, antlers_visible: false, bucks: [{ rack: 'head down', group: 'new2', confidence: 'medium' }] },
@@ -473,6 +473,9 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   const out = (await r.json()).result;
   assert.equal(out.photos[3].bucks[0].group, 'unsure');
   assert.equal(out.photos[0].bucks.length, 2); // two bucks in one photo
+  assert.equal(out.photos[0].bucks[1].where, 'right, behind');
+  assert.deepEqual(sent[0].output_config.format.schema.properties.photos.items.properties.bucks.items.required, ['rack', 'where', 'box', 'group', 'confidence']);
+  assert.match(sent[0].system, /say which one you mean every time/);
   assert.equal(out.new_bucks[0].name, 'Tall 10');
   const body = sent[0];
   assert.equal(body.messages[0].content.filter((c) => c.type === 'image').length, 6); // 2 refs (capped) + 4 photos
