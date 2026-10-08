@@ -604,3 +604,17 @@ dialog.bcmp:not([open]) { display: none; }
 
 .bcmp-which { position: absolute; left: 6px; top: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 10px; background: #F59E0B; color: #111; max-width: calc(100% - 50px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cr-photo { position: relative; }
+
+/* Start over */
+.so summary { list-style: none; cursor: pointer; }
+.so summary::-webkit-details-marker { display: none; }
+.so summary h2 { margin: 0; font-size: 17px; }
+.so[open] summary { margin-bottom: 8px; }
+.so-opts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.so-opt { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.so-opt input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+.so-opt span { display: flex; flex-direction: column; gap: 2px; }
+.so-opt small { color: var(--muted); font-size: 12px; }
+.so-opt:has(input:disabled:not(:checked)) { opacity: .55; }
+.so-preview { font-size: 14px; background: color-mix(in srgb, var(--warn) 10%, var(--panel)); border-radius: 10px; padding: 10px; }
+.so .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }

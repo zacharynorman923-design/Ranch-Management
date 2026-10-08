@@ -107,7 +107,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false, buckDedupe: false });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false, buckDedupe: false, relabel: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -508,4 +508,19 @@ test('buck-dedupe: compares named bucks, ignores conditions, drops self-pairs', 
   assert.deepEqual(sent[0].output_config.format.schema.properties.duplicates.items.properties.keep.enum, ['b1', 'b2', 'b3']);
   assert.match(sent[0].messages[0].content.find((c) => c.text?.includes('b1')).text, /confirmed by the owner/);
   assert.equal((await post([{ id: 'b1', name: 'x', refs: [img] }])).status, 400);
+});
+
+test('relabel: puts photos in a date range back in the labeling queue', async () => {
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k' };
+  for (const [id, taken, status] of [['a', '2026-09-20T12:00:00Z', 'done'], ['b', '2026-09-25T12:00:00Z', 'done'], ['c', '2026-08-01T12:00:00Z', 'done'], ['d', '2026-09-26T08:00:00Z', null]]) {
+    await env.DB.prepare("INSERT INTO photos (id, camera_id, camera, taken, fetched_at) VALUES (?1, 'c', 'Cam', ?2, ?2)").bind(id, taken).run();
+    if (status) await env.DB.prepare("INSERT INTO photo_labels (id, status, attempts, tags, updated) VALUES (?1, ?2, 1, 'doe', '2026-09-27')").bind(id, status).run();
+  }
+  const r = await call(env, '/relabel', { method: 'POST', body: JSON.stringify({ since: '2026-09-15', until: '2026-09-30' }), headers: { 'Content-Type': 'application/json' } });
+  assert.equal(r.status, 200);
+  const out = await r.json();
+  assert.equal(out.keepDays, 45);
+  const rows = await env.DB.prepare('SELECT id, status, attempts FROM photo_labels ORDER BY id').all();
+  assert.deepEqual(rows.results.map((x) => `${x.id}:${x.status}:${x.attempts}`), ['a:pending:0', 'b:pending:0', 'c:done:1', 'd:pending:0']);
+  assert.equal((await call(env, '/relabel', { method: 'POST', body: JSON.stringify({ since: 'yesterday' }) })).status, 400);
 });

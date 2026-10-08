@@ -5,7 +5,7 @@ import * as C from '../calc.js';
 import * as D from '../deer.js';
 import { esc, n0, n1, n2, stat, pill, listPanel, dateLabel, openForm, toast } from '../ui.js';
 import { photoURL, photoTags } from '../photos.js';
-import { buckRefIds, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames } from '../relay.js';
+import { buckRefIds, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames, resetBuckAI, undoBuckReset, relabelPhotos } from '../relay.js';
 import { openViewer } from '../viewer.js';
 import { ranchPlace } from '../place.js';
 import { censusNow, reviewCounts, openCensusReview } from '../censusreview.js';
@@ -268,11 +268,48 @@ function censusPanel() {
   ${listPanel('camsurveys', { title: 'Saved camera censuses' })}`;
 }
 
+/** Start over: wipe the AI's buck work (optionally more), then let it sort again. Undoable. */
+const reset = { confirmed: false, reviews: false, relabel: false, busy: '', open: false };
+function startOverPanel() {
+  const st = db.settings();
+  const bucks = db.all('bucks'), photos = db.all('photos');
+  const plan = D.planReset(bucks, photos, reset);
+  const kept = plan.keepBucks.map((id) => db.get('bucks', id)?.name).filter(Boolean);
+  const unfiled = plan.patches.filter((x) => 'buck' in x.patch).length;
+  const reviewed = photos.filter((p) => p.review).length;
+  const { start, end } = censusNow();
+  const keepDays = 45;
+  const relayFrom = C.addDays(C.today(), -keepDays);
+  const relabelFrom = start > relayFrom ? start : relayFrom;
+  const relabelN = photos.filter((p) => p.source === 'reveal' && p.date >= relabelFrom && p.date <= end).length;
+  const canRelabel = !!st.relayInfo?.sources?.relabel;
+  const undo = st.buckResetUndo;
+  const box = (k, label, sub, dis = false) => `<label class="so-opt"><input type="checkbox" data-reset-opt="${k}" ${reset[k] ? 'checked' : ''} ${dis ? 'disabled' : ''}><span><b>${label}</b><small>${sub}</small></span></label>`;
+  return `<section class="panel">
+    <details class="so" ${reset.open || reset.busy ? 'open' : ''}>
+      <summary><h2>↺ Start over with the AI</h2></summary>
+      <p class="small">Clears what the AI sorted so it can go through your buck photos again with the improved rules. Your own work stays unless you tick it below. A snapshot is saved first, so you can undo it.</p>
+      <div class="so-opts">
+        <label class="so-opt"><input type="checkbox" checked disabled><span><b>The AI's buck sorting</b><small>Its unconfirmed bucks, the photos it filed, its suggestions, rack notes and places. Then it sorts again.</small></span></label>
+        ${box('confirmed', 'Also bucks I confirmed or named', bucks.filter((b) => !b.auto).length ? `${bucks.filter((b) => !b.auto).map((b) => esc(b.name)).join(', ')}: removed, and their photos untagged` : 'none yet', !bucks.some((b) => !b.auto))}
+        ${box('reviews', 'Also my census checks', reviewed ? `${plural(reviewed, 'photo')} with counts you checked or fixed` : 'none yet', !reviewed)}
+        ${box('relabel', 'Re-label the photos with the AI', canRelabel ? `${relabelN} camera photo${relabelN === 1 ? '' : 's'} from ${esc(dateLabel(relabelFrom))} to ${esc(dateLabel(end))} (the relay keeps ${keepDays} days). Redoes the deer, doe and fawn counts the census uses. One AI request per photo, a few hundred a day.` : 'Needs the relay updated (re-run Deploy relay).', !canRelabel || !relabelN)}
+      </div>
+      <p class="so-preview"><b>This will:</b> remove ${plural(plan.removeBucks.length, 'buck')}${kept.length ? `, keep ${esc(kept.slice(0, 6).join(', '))}${kept.length > 6 ? ` and ${kept.length - 6} more` : ''}` : ''}, and clear AI work on ${plural(plan.patches.length, 'photo')}${unfiled ? ` (${unfiled} un-filed)` : ''}${reset.relabel ? `, then re-label ${relabelN} photos` : ''}.</p>
+      <div class="bt-row">
+        <button class="btn danger" data-reset-go ${reset.busy ? 'disabled' : ''}>${reset.busy || '↺ Start over'}</button>
+        ${undo ? `<button class="btn" data-reset-undo>Undo the reset from ${esc(new Date(undo.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</button>` : ''}
+      </div>
+      ${undo ? '<p class="small muted">Undo puts back every buck and photo tag as they were before the reset, and removes bucks the new sort made. Re-labeled photos keep their new labels.</p>' : ''}
+    </details>
+  </section>`;
+}
+
 export function bucks(params) {
   const id = params.get('id');
   const b = id ? db.get('bucks', id) : null;
   if (b) return buckDetail(b);
-  return `${summaryPanel()}${suggestionsPanel()}${bucksPanel()}${censusPanel()}`;
+  return `${summaryPanel()}${suggestionsPanel()}${bucksPanel()}${censusPanel()}${startOverPanel()}`;
 }
 
 export function bindBucks(el, rerender, params) {
@@ -359,6 +396,34 @@ export function bindBucks(el, rerender, params) {
     const other = el.querySelector('[data-merge-into]')?.value;
     if (!other) return toast('Pick a buck to compare with first');
     compare(params.get('id'), other);
+  });
+  el.querySelector('details.so')?.addEventListener('toggle', (e) => { reset.open = e.currentTarget.open; });
+  el.querySelectorAll('[data-reset-opt]').forEach((x) => x.addEventListener('change', () => { reset[x.dataset.resetOpt] = x.checked; rerender(); }));
+  el.querySelector('[data-reset-go]')?.addEventListener('click', async () => {
+    const what = ['the AI\'s buck sorting', reset.confirmed && 'your confirmed bucks', reset.reviews && 'your census checks'].filter(Boolean).join(', ');
+    if (!confirm(`Start over? This clears ${what}${reset.relabel ? ' and re-labels the photos' : ''}. You can undo it.`)) return;
+    try {
+      reset.busy = 'Clearing…'; rerender();
+      const r = await resetBuckAI({ confirmed: reset.confirmed, reviews: reset.reviews });
+      let msg = `Cleared: ${plural(r.removedBucks, 'buck')} removed, ${plural(r.photos, 'photo')} reset.`;
+      if (reset.relabel) {
+        const { start, end } = censusNow();
+        const from = start > C.addDays(C.today(), -45) ? start : C.addDays(C.today(), -45);
+        const q = await relabelPhotos(from, end);
+        msg += ` ${q.queued} photos queued for new labels (about ${q.days} day${q.days === 1 ? '' : 's'}).`;
+      }
+      reset.busy = '🤖 Sorting again…'; rerender();
+      const sorted = await sortPendingBucks({ batches: 8 }).catch(() => null);
+      if (sorted) msg += ` Re-sorted ${sorted.sorted}: ${plural(sorted.newBucks, 'buck')} found.`;
+      toast(msg);
+    } catch (err) { toast(`Couldn't finish: ${err.message}`); }
+    Object.assign(reset, { busy: '', confirmed: false, reviews: false, relabel: false });
+    rerender();
+  });
+  el.querySelector('[data-reset-undo]')?.addEventListener('click', async () => {
+    if (!confirm('Undo the reset and put everything back as it was?')) return;
+    const r = await undoBuckReset();
+    toast(r ? `Restored ${plural(r.bucks, 'buck')}` : 'Nothing to undo');
   });
   el.querySelector('[data-add-buck]')?.addEventListener('click', () => openForm('bucks', null, { status: 'active' }));
   el.querySelector('[data-edit-buck]')?.addEventListener('click', (e) => openForm('bucks', db.get('bucks', e.currentTarget.dataset.editBuck)));

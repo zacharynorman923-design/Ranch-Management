@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage } from './photos.js';
-import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack } from './deer.js';
+import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -167,7 +167,8 @@ async function doSync() {
       for (const r of rows) {
         cursor = r.updated > cursor ? r.updated : cursor;
         const ph = db.get('photos', `reveal-${r.id}`);
-        if (ph && (ph.aiTags !== (r.tags || '') || ph.aiSummary !== (r.summary || '') || (r.labels && !ph.aiCounts))) {
+        // A redone label (after a reset) brings new deer counts even when the tags look the same.
+        if (ph && (ph.aiTags !== (r.tags || '') || ph.aiSummary !== (r.summary || '') || (r.labels && JSON.stringify(deerCounts(r.labels)) !== JSON.stringify(ph.aiCounts || null)))) {
           writes.push({ ...ph, aiTags: r.tags || '', aiSummary: r.summary || '', ...(r.labels ? { aiCounts: deerCounts(r.labels) } : {}) });
         }
       }
@@ -361,6 +362,52 @@ export async function checkBuckDuplicates(ids) {
   const result = { at: new Date().toISOString(), checked: bucks.map((b) => b.id), duplicates: r.result.duplicates || [] };
   await db.saveSettings({ buckDupes: result });
   return result;
+}
+
+/* ------------------------------- start over -------------------------------- */
+/**
+ * Clear the AI's buck work (and optionally your confirmed bucks and census
+ * checks) so the improved AI can sort everything again. Saves a snapshot of
+ * every buck and every photo's buck fields first, for undoBuckReset().
+ */
+export async function resetBuckAI(opts = {}) {
+  const bucks = db.all('bucks'), photos = db.all('photos');
+  const plan = planReset(bucks, photos, opts);
+  const st = db.settings();
+  const pick = (p) => Object.fromEntries(BUCK_FIELDS.filter((k) => k in p).map((k) => [k, p[k]]));
+  await db.saveSettings({
+    buckResetUndo: {
+      at: new Date().toISOString(), opts,
+      bucks, photos: photos.filter((p) => BUCK_FIELDS.some((k) => k in p)).map((p) => ({ id: p.id, ...pick(p) })),
+      settings: { buckDupes: st.buckDupes || null, buckSortLast: st.buckSortLast || null },
+    },
+    buckDupes: null, buckSortLast: null,
+  });
+  if (plan.patches.length) await db.putMany('photos', plan.patches.map(({ id, patch }) => ({ ...db.get('photos', id), ...patch })));
+  for (const id of plan.removeBucks) await db.del('bucks', id);
+  return { removedBucks: plan.removeBucks.length, keptBucks: plan.keepBucks.length, photos: plan.patches.length };
+}
+/** Put everything back the way it was before the last reset (bucks the re-sort made are removed). */
+export async function undoBuckReset() {
+  const snap = db.settings().buckResetUndo;
+  if (!snap) return null;
+  const had = new Set(snap.bucks.map((b) => b.id));
+  for (const b of db.all('bucks')) if (!had.has(b.id)) await db.del('bucks', b.id);
+  await db.putMany('bucks', snap.bucks);
+  const saved = new Map(snap.photos.map((p) => [p.id, p]));
+  const writes = db.all('photos').filter((p) => saved.has(p.id) || BUCK_FIELDS.some((k) => p[k] != null && p[k] !== '' && p[k] !== false)).map((p) => {
+    const base = { ...p };
+    for (const k of BUCK_FIELDS) delete base[k];
+    const { id, ...fields } = saved.get(p.id) || {};
+    return { ...base, ...fields };
+  });
+  if (writes.length) await db.putMany('photos', writes);
+  await db.saveSettings({ ...snap.settings, buckResetUndo: null });
+  return { bucks: snap.bucks.length, photos: writes.length };
+}
+/** Have the relay label photos in a date range again with the current AI rules. */
+export async function relabelPhotos(since, until) {
+  return call('/relabel', { method: 'POST', body: { since, until } });
 }
 
 async function matchPendingBucks() {
