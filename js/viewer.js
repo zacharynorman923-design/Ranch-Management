@@ -5,7 +5,8 @@
 import * as db from './db.js';
 import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
 import { relayPhotoBlob, relayConfigured, matchBuckPhoto } from './relay.js';
-import { cameraCensus, photoDeer, photoBucks, withBucks } from './deer.js';
+import { cameraCensus, photoDeer, photoBucks, withBucks, bucksLabel, buckWhere } from './deer.js';
+import { spotBoxes, fitOverlay } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
@@ -21,7 +22,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   const dlg = document.createElement('dialog');
   dlg.className = 'viewer';
   dlg.innerHTML = `
-    <div class="v-stage" data-stage><img data-img alt="" draggable="false"></div>
+    <div class="v-stage" data-stage><img data-img alt="" draggable="false"><div class="spots" data-spots></div></div>
     <div class="v-top">
       <div class="v-cap" data-cap></div>
       <button type="button" class="v-btn" data-x aria-label="Close">✕</button>
@@ -46,6 +47,9 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   const apply = (anim = false) => {
     img.style.transition = anim ? 'transform .2s ease-out' : 'none';
     img.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+    // The who's-who outlines ride along with the photo when you zoom and pan.
+    const ov = $('[data-spots]');
+    if (ov) { ov.style.transition = img.style.transition; ov.style.transform = img.style.transform; }
     dlg.classList.toggle('zoomed', s > 1.01);
   };
   const clampPan = () => {
@@ -74,16 +78,17 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     if (!eff.includes('buck') && !mineIds.length) { box.hidden = true; return; }
     box.hidden = false;
     const names = mineIds.map((id) => db.get('bucks', id)?.name || 'Buck');
+    const label = bucksLabel(p, (id) => db.get('bucks', id)?.name || 'Buck');
     const ai = p.buckAI;
     const aiBuck = ai && !mineIds.includes(ai.match) && db.get('bucks', ai.match);
     let line = '';
     if (mineIds.length && p.buckAuto) {
-      line = `🤖 Auto-sorted as <b>${names.map(esc).join(' + ')}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}
+      line = `🤖 Auto-sorted as <b>${esc(label)}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}
         <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, that's right</button><button type="button" class="v-tag" data-bk-clear>✕ Wrong, clear it</button></div>`;
     } else if (mineIds.length) {
       line = `🦌 In this photo: <b>${names.map(esc).join(' + ')}</b>`;
     } else if (aiBuck) {
-      line = `🤖 Looks like <b>${esc(aiBuck.name)}</b> <small>(${esc(ai.confidence)})</small>${ai.reason ? `<br><small>${esc(ai.reason)}</small>` : ''}
+      line = `🤖 Looks like <b>${esc(aiBuck.name)}</b>${ai.where ? ` <small>(the buck ${esc(/^(in |on |at |behind|near|far)/.test(ai.where) ? ai.where : `on the ${ai.where}`)})</small>` : ''} <small>(${esc(ai.confidence)})</small>${ai.reason ? `<br><small>${esc(ai.reason)}</small>` : ''}
         <div class="v-row"><button type="button" class="v-tag on" data-bk-yes>✓ Yes, ${esc(aiBuck.name)}</button><button type="button" class="v-tag" data-bk-no>✕ No</button></div>`;
     } else if (ai?.match === 'new') {
       line = `🤖 Looks like a buck you haven't named yet${ai.rack ? `: <small>${esc(ai.rack)}</small>` : ''}`;
@@ -93,7 +98,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       line = `<small>Buck match failed: ${esc(ai.reason || '')}</small>`;
     }
     // Every named buck is a toggle, so a photo with two bucks gets both.
-    const summary = `<div class="v-sum"><span>🦌 ${mineIds.length ? `<b>${names.map(esc).join(' + ')}</b>` : '<span class="v-dim">No buck named</span>'}</span>
+    const summary = `<div class="v-sum"><span>🦌 ${mineIds.length ? `<b>${esc(label)}</b>` : '<span class="v-dim">No buck named</span>'}</span>
       <button type="button" class="v-sum-btn" data-toggle="bucks">${open.bucks ? 'Done ▴' : mineIds.length ? 'Change ▾' : 'Name him ▾'}</button></div>`;
     const actionLine = line && !(mineIds.length && !p.buckAuto) ? `<div>${line}</div>` : '';
     if (!open.bucks) { box.innerHTML = `${actionLine}${summary}`; return; }
@@ -102,6 +107,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       <div class="v-row">${bucks.map((b) => `<button type="button" class="v-tag ${mineIds.includes(b.id) ? 'on' : ''}" data-bk="${esc(b.id)}">${mineIds.includes(b.id) ? '✓ ' : ''}${esc(b.name)}</button>`).join('')}
         <button type="button" class="v-tag" data-bk-new>＋ New buck</button>
         ${bucks.length && relayConfigured() && !mineIds.length ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>
+      ${mineIds.length > 1 ? `<div class="v-places"><small>Which is which?</small>${mineIds.map((id) => `<div class="v-place"><b>${esc(db.get('bucks', id)?.name || 'Buck')}</b>${['left', 'middle', 'right', 'front', 'back'].map((w) => `<button type="button" class="v-tag ${buckWhere(p, id) === w ? 'on' : ''}" data-place="${esc(id)}:${w}">${w}</button>`).join('')}</div>`).join('')}</div>` : ''}
       ${mineIds.length ? `<div class="v-row">${mineIds.map((id) => { const b = db.get('bucks', id); const star = (b?.refs || []).includes(p.id); return `<button type="button" class="v-link" data-bk-star="${esc(id)}">${star ? '★' : '☆'} reference for ${esc(b?.name || 'buck')}</button>`; }).join('')}</div>` : ''}`;
   };
 
@@ -150,6 +156,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       }).join('')}</div>` : ''}`;
     $('[data-okay]').hidden = !needsReview(p);
     renderBuck(p, eff);
+    $('[data-spots]').innerHTML = spotBoxes(p);
     renderCensus(p);
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;
@@ -247,6 +254,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   stage.addEventListener('pointercancel', end);
   stage.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(local(e), s * (e.deltaY < 0 ? 1.25 : 0.8)); apply(); }, { passive: false });
   img.addEventListener('load', () => { clampPan(); apply(); });
+  fitOverlay(img, $('[data-spots]'));
 
   // ---- buttons ----
   dlg.addEventListener('click', async (e) => {
@@ -259,6 +267,17 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       // Next photo in a burst that still needs a look.
       const k = ids.findIndex((id, j) => j > i && needsReview(db.get('photos', id)));
       if (k > 0) setTimeout(() => show(k), 350);
+      return;
+    }
+    const pl = e.target.closest('[data-place]');
+    if (pl) {
+      const p = db.get('photos', ids[i]);
+      const [bid, where] = pl.dataset.place.split(':');
+      // Your word wins; the AI's outline goes if it no longer matches what you said.
+      const old = p.buckSpots?.[bid];
+      const keepBox = old?.box && buckWhere({ buckSpots: { x: { box: old.box } } }, 'x') === where ? old.box : null;
+      await db.put('photos', { ...p, buckSpots: { ...(p.buckSpots || {}), [bid]: { where, box: keepBox, by: 'you' } } });
+      renderInfo();
       return;
     }
     const tg = e.target.closest('[data-toggle]');
@@ -286,7 +305,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
         const id = bk.dataset.bk;
         await db.put('photos', tagged({ ...withBucks(p, cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]), buckAuto: false }));
       } else if (bk.hasAttribute('data-bk-ok')) await db.put('photos', { ...p, buckAuto: false });
-      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...withBucks(p, [...cur, p.buckAI.match]), buckAuto: false }));
+      else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...withBucks(p, [...cur, p.buckAI.match]), buckAuto: false, ...(p.buckAI.where || p.buckAI.box ? { buckSpots: { ...(p.buckSpots || {}), [p.buckAI.match]: { where: p.buckAI.where || '', box: p.buckAI.box || null, by: 'ai' } } } : {}) }));
       else if (bk.hasAttribute('data-bk-no')) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
       else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...withBucks(p, []), buckAuto: false });
       else if (bk.hasAttribute('data-bk-new')) {

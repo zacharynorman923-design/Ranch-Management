@@ -192,7 +192,7 @@ function buckDetail(b) {
       <p class="small muted">The AI compares new photos against these. Pick clear shots from different angles; star them in the viewer.</p>
       <div class="buck-gallery">${refs.map((id) => thumb(id, 'buck-photo', refs.join(','))).join('') || '<p class="empty">None yet.</p>'}</div>
       <h3>All sightings</h3>
-      <div class="buck-gallery">${photos.slice(0, 60).map((p) => `<figure class="${p.buckAuto ? 'is-auto' : ''}">${thumb(p.id, 'buck-photo', photos.map((x) => x.id).join(','))}<figcaption class="small">${p.buckAuto ? '🤖 ' : ''}${when(p)}<br>${esc(camName(p.device))}</figcaption></figure>`).join('')}</div>
+      <div class="buck-gallery">${photos.slice(0, 60).map((p) => `<figure class="${p.buckAuto ? 'is-auto' : ''}">${thumb(p.id, 'buck-photo', photos.map((x) => x.id).join(','))}<figcaption class="small">${p.buckAuto ? '🤖 ' : ''}${when(p)}<br>${esc(camName(p.device))}${D.photoBucks(p).length > 1 ? `<br><b>${esc(D.buckWhere(p, b.id) ? `${D.buckWhere(p, b.id)} of ${D.photoBucks(p).length}` : `1 of ${D.photoBucks(p).length} bucks`)}</b>` : ''}</figcaption></figure>`).join('')}</div>
       <div class="head-actions">
         ${(b.status || 'active') === 'active' ? `<button class="btn" data-status="harvested">Mark harvested</button><button class="btn" data-status="gone">Not seen anymore</button>` : '<button class="btn" data-status="active">Back to active</button>'}
       </div>

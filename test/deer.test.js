@@ -170,3 +170,21 @@ test('buck names and racks drop lighting/weather words; duplicate plan keeps the
   ], bucks, (id) => counts[id]);
   assert.deepEqual(plan.map((p) => [p.keep, p.merge]), [['a', 'c'], ['b', 'a']]);
 });
+
+test('which buck is where: boxes, place words and labels', () => {
+  assert.deepEqual(D.normBox([40, 300, 380, 500]), [0.04, 0.3, 0.38, 0.5]);
+  assert.deepEqual(D.normBox([0.5, 0.2, 0.3, 0.4]), [0.5, 0.2, 0.3, 0.4]);
+  assert.equal(D.normBox([1, 2, 3]), null);
+  assert.equal(D.normBox([990, 990, 5, 5]), null);
+  const plan = D.planBuckSort({ photos: [{ photo: 1, antlers_visible: true, bucks: [
+    { group: 'big8', rack: '8', where: 'left', box: [40, 300, 380, 500], confidence: 'high' },
+    { group: 'new1', rack: 'tall 10', where: 'right, behind', box: [600, 250, 300, 450], confidence: 'high' },
+  ] }], new_bucks: [{ group: 'new1', name: 'Tall 10', rack: 'tall 10', best_photo: 1 }] }, ['p1'], ['big8']);
+  assert.deepEqual(plan.spots.p1.big8, { where: 'left', box: [0.04, 0.3, 0.38, 0.5] });
+  assert.equal(plan.spots.p1.new1.where, 'right, behind');
+  const p = { buck: 'a', bucks: ['a', 'b'], buckSpots: { a: { where: 'left' }, b: { box: [0.7, 0.2, 0.2, 0.3] } } };
+  assert.equal(D.buckWhere(p, 'b'), 'right');
+  const names = { a: 'Big 8', b: 'Tall 10' };
+  assert.equal(D.bucksLabel(p, (id) => names[id]), 'Big 8 (left) + Tall 10 (right)');
+  assert.equal(D.bucksLabel({ buck: 'a', buckSpots: { a: { where: 'left' } } }, (id) => names[id]), 'Big 8'); // one buck: no place needed
+});
