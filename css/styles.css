@@ -624,3 +624,11 @@ dialog.viewer.moving .v-stage { cursor: crosshair; outline: 3px dashed #F59E0B; 
 dialog.viewer.moving::after { content: attr(data-hint); position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 64px); transform: translateX(-50%); background: #F59E0B; color: #111; font-weight: 700; font-size: 14px; padding: 6px 14px; border-radius: 16px; z-index: 5; pointer-events: none; }
 .bcmp-fix { position: absolute; right: 44px; top: 6px; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 14px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
 .bcmp-fix.on { background: #F59E0B; color: #111; font-weight: 700; }
+
+/* Boxes on/off */
+.no-spots .spots { display: none; }
+.box-toggle { font: inherit; white-space: nowrap; }
+.v-top .box-toggle { flex: none; }
+.bcmp-boxes, .cr-boxes { position: absolute; font-size: 12px; padding: 5px 10px; border-radius: 14px; border: 0; background: rgba(0,0,0,.55); color: #fff; z-index: 1; }
+.bcmp-boxes { right: 6px; bottom: 6px; }
+.cr-boxes { left: 8px; top: 8px; }

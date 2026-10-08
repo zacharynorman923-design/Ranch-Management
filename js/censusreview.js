@@ -7,7 +7,7 @@ import * as C from './calc.js';
 import * as D from './deer.js';
 import { photoURL } from './photos.js';
 import { openViewer } from './viewer.js';
-import { spotBoxes, fitOverlay } from './spots.js';
+import { spotBoxes, fitOverlay, boxToggle } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const KINDS = [['buck', 'Bucks', '🦌'], ['doe', 'Does', '🦌'], ['fawn', 'Fawns', '🦌']];
@@ -94,6 +94,7 @@ export function openCensusReview({ filter = 'todo' } = {}) {
       <div class="cr-photo" data-swipe>
         <img data-img alt="Camera photo"><div class="spots" data-ov>${spotBoxes(p)}</div>
         <button type="button" class="cr-zoom" data-zoom aria-label="Zoom">🔍 Zoom</button>
+        ${boxToggle(p, { extra: 'cr-boxes' })}
         ${v.reviewed ? '<span class="cr-badge ok">✓ checked</span>' : `<span class="cr-badge">AI: ${esc(said(ai))}</span>`}
       </div>
       ${v.ids.length > 1 ? `<div class="cr-strip">${v.ids.map((id, i) => `<button type="button" class="cr-thumb ${i === photoIdx ? 'on' : ''}" data-ph="${i}"><img data-pid="${esc(id)}" alt=""><small>${esc(db.get('photos', id)?.time || '')}</small></button>`).join('')}</div>` : ''}

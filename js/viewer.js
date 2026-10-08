@@ -6,7 +6,7 @@ import * as db from './db.js';
 import { photoURL, photoTags, needsReview, markPhotosOk } from './photos.js';
 import { relayPhotoBlob, relayConfigured, matchBuckPhoto } from './relay.js';
 import { cameraCensus, photoDeer, photoBucks, withBucks, bucksLabel, buckWhere, normBox } from './deer.js';
-import { spotBoxes, fitOverlay, boxAt } from './spots.js';
+import { spotBoxes, fitOverlay, boxAt, boxToggle, showBoxes } from './spots.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
@@ -26,6 +26,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     <div class="v-stage" data-stage><img data-img alt="" draggable="false"><div class="spots" data-spots></div></div>
     <div class="v-top">
       <div class="v-cap" data-cap></div>
+      <span data-boxbtn></span>
       <button type="button" class="v-btn" data-x aria-label="Close">✕</button>
     </div>
     <button type="button" class="v-nav v-prev" data-prev aria-label="Previous photo">‹</button>
@@ -158,6 +159,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     $('[data-okay]').hidden = !needsReview(p);
     renderBuck(p, eff);
     $('[data-spots]').innerHTML = spotBoxes(p);
+    $('[data-boxbtn]').innerHTML = boxToggle(p, { extra: 'v-btn' });
     renderCensus(p);
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;
@@ -284,6 +286,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     const mv = e.target.closest('[data-move-box]');
     if (mv) {
       moveFor = moveFor === mv.dataset.moveBox ? null : mv.dataset.moveBox;
+      if (moveFor) await showBoxes(); // you need to see the box you're placing
       dlg.classList.toggle('moving', !!moveFor);
       dlg.dataset.hint = moveFor ? `Tap ${db.get('bucks', moveFor)?.name || 'the buck'} in the photo` : '';
       renderInfo();
