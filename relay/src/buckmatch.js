@@ -11,6 +11,7 @@ const SYSTEM = `You identify individual white-tailed deer bucks in trail-camera 
 You are given reference photos of bucks the owner has already named, then one new photo. Decide whether the buck in the new photo is one of the named bucks, a different ("new") buck, or impossible to tell ("unsure").
 Compare the antlers first: number of points per side, brow tines, drop tines, kickers or stickers, split or forked tines, main-beam curve, inside spread relative to the ears (about 15 in ear tip to ear tip), tine length and mass, and left/right asymmetry. Then body: size, neck, face markings, scars, torn ears.
 Camera angle changes how a rack looks (head-on hides points; profile hides spread), and infrared night photos lose detail. Racks shed in late winter and regrow each summer, so velvet or a new year's rack can differ from last year's references.
+Lighting, fog, mist, rain, dust, night/infrared (black-and-white), blur, distance, camera angle, which camera or feeder, and time of day are NOT differences between bucks. The same buck at night and in daylight, or in fog and in sun, is the same buck: never treat those as distinguishing features, never split a buck into separate groups because of them, and never mention them in a name or rack description.
 Only say a named buck when specific features match and none contradict. If the rack can't be seen clearly, answer "unsure". Never guess to fill a slot; a wrong match is worse than "unsure".`;
 
 export async function matchBuck(env, body) {
@@ -69,7 +70,73 @@ export async function matchBuck(env, body) {
 
 const SORT_SYSTEM = `${SYSTEM}
 You may also be given several new photos at once. Sort them: put photos of the same buck in the same group. A photo can show more than one buck: list each buck in it separately. Use a named buck's id when the photo is that buck, a new group label ("new1", "new2", …) for a buck that isn't named yet (the same label for every photo of that same buck), or "unsure" when the rack can't be compared.
-For each new group, suggest a short name from the most distinctive feature of the rack a hunter would use (e.g. "Split Brow 8", "Tall 10", "Drop Tine", "Wide 9", "Kicker 7"), and pick the photo that shows the rack best.`;
+For each new group, suggest a short name from the most distinctive feature of the rack (or body) a hunter would use (e.g. "Split Brow 8", "Tall 10", "Drop Tine", "Wide 9", "Kicker 7"), and pick the photo that shows the rack best. Names describe the deer only: never words like Night, Foggy, Misty, Rainy, Dark, Blurry, IR, Day, Morning, Evening, Feeder or Cam.`;
+
+const DEDUPE_SYSTEM = `${SYSTEM}
+Now you are checking a list of bucks the owner (or an earlier automatic sort) has already named, to find any that are really the same buck photographed under different conditions: night infrared vs daylight, fog, rain, a different camera, or a different angle. Compare antlers and body only.
+Report only pairs that are likely the same buck, each once. For each, say which to keep (the one with the clearer reference photos or more confirmed photos, if you can tell) and which to merge into it, how confident you are, and the matching features. If none look like the same buck, return an empty list.`;
+
+/**
+ * Look for duplicates among named bucks (e.g. a buck the auto-sort split into
+ * a "night" and a "day" version). body: { bucks: [{ id, name, photos, refs: [base64…] }] }
+ */
+export async function dedupeBucks(env, body) {
+  if (!env.ANTHROPIC_API_KEY) throw Object.assign(new Error('Duplicate checking needs an ANTHROPIC_API_KEY on the relay'), { status: 400 });
+  const strip = (x) => String(x || '').replace(/^data:image\/\w+;base64,/, '');
+  const bucks = (Array.isArray(body?.bucks) ? body.bucks : [])
+    .map((b) => ({ id: String(b.id || '').slice(0, 40), name: String(b.name || 'Buck').slice(0, 40), photos: Number(b.photos) || 0, confirmed: !!b.confirmed, refs: (b.refs || []).map(strip).filter((r) => r.length >= 1000).slice(0, 3) }))
+    .filter((b) => b.id && b.refs.length).slice(0, 12);
+  if (bucks.length < 2) throw Object.assign(new Error('Need at least two bucks with photos to compare'), { status: 400 });
+
+  const tz = env.RANCH_TZ || 'America/Chicago';
+  const today = localDate(Date.now(), tz);
+  const limit = Number(env.BUCK_MATCH_DAILY_LIMIT || 80);
+  const day = (await kvGet(env, 'buck_day')) || {};
+  const used = day.date === today ? day.n : 0;
+  if (used >= limit) throw Object.assign(new Error(`Daily buck-matching limit reached (${limit}). It picks up again tomorrow.`), { status: 429 });
+  await kvSet(env, 'buck_day', { date: today, n: used + 1 });
+
+  const ids = bucks.map((b) => b.id);
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['duplicates'],
+    properties: {
+      duplicates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['keep', 'merge', 'confidence', 'reason'],
+          properties: {
+            keep: { type: 'string', enum: ids },
+            merge: { type: 'string', enum: ids },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            reason: { type: 'string', description: 'The rack/body features that match, e.g. "same split left brow and drop tine; the night photos just hide the brow".' },
+          },
+        },
+      },
+    },
+  };
+  const content = [{ type: 'text', text: `Named bucks to check (${bucks.length}):` }];
+  for (const b of bucks) {
+    content.push({ type: 'text', text: `Buck id "${b.id}", named "${b.name}" (${b.photos} photos${b.confirmed ? ', confirmed by the owner' : ', sorted automatically'}):` });
+    for (const r of b.refs) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r } });
+  }
+  content.push({ type: 'text', text: 'Which of these are the same buck? List each likely duplicate pair once.' });
+
+  const model = env.BUCK_MATCH_MODEL || 'claude-opus-5';
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 120_000, maxRetries: 1 });
+  const res = await client.beta.messages.create({
+    model, max_tokens: 4000, system: DEDUPE_SYSTEM,
+    messages: [{ role: 'user', content }],
+    ...modelOptions(model, schema, 'medium'),
+  });
+  if (res.stop_reason === 'refusal') throw Object.assign(new Error('The model declined to compare these bucks'), { status: 422 });
+  const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  out.duplicates = (out.duplicates || []).filter((d) => d.keep !== d.merge);
+  return { model, result: out };
+}
 
 /**
  * Sort a batch of unidentified buck photos into named bucks and new groups.

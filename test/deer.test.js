@@ -147,3 +147,26 @@ test('auto-sort plan: two bucks in one photo go to both', () => {
   const c2 = D.cameraCensus({ photos: [{ id: 'v1', aiCounts: { buck: 2 }, buck: 'big8', bucks: ['big8', 'tall'] }], uniqueBucks: 2, days: 14 });
   assert.equal(c2.unidentified, 0);
 });
+
+test('buck names and racks drop lighting/weather words; duplicate plan keeps the confirmed buck', () => {
+  assert.equal(D.cleanBuckName('Night Kicker 9'), 'Kicker 9');
+  assert.equal(D.cleanBuckName('Foggy Tall 10'), 'Tall 10');
+  assert.equal(D.cleanBuckName('IR Wide 6 (night)'), 'Wide 6');
+  assert.equal(D.cleanBuckName('Drop Tine'), 'Drop Tine');
+  assert.equal(D.cleanBuckName('Split Brow 8'), 'Split Brow 8');
+  assert.equal(D.cleanBuckName('Night'), 'Buck');
+  assert.equal(D.cleanRack('tall 10, long G2s, foggy morning'), 'tall 10, long G2s');
+  assert.equal(D.cleanRack('kicker off right G2, IR night'), 'kicker off right G2');
+  assert.equal(D.cleanRack('main-frame 8, split left brow'), 'main-frame 8, split left brow');
+
+  const bucks = [{ id: 'a', auto: true }, { id: 'b', auto: false }, { id: 'c', auto: true }, { id: 'd', auto: true, notSame: ['c'] }];
+  const counts = { a: 9, b: 2, c: 5, d: 1 };
+  const plan = D.planDedupe([
+    { keep: 'a', merge: 'b', confidence: 'medium', reason: 'x' }, // b is confirmed, so keep b
+    { keep: 'c', merge: 'd', confidence: 'high', reason: 'y' },   // you said not the same
+    { keep: 'a', merge: 'c', confidence: 'high', reason: 'z' },   // a has more photos
+    { keep: 'c', merge: 'a', confidence: 'high', reason: 'dup' }, // same pair again
+    { keep: 'a', merge: 'gone', confidence: 'high', reason: '' },
+  ], bucks, (id) => counts[id]);
+  assert.deepEqual(plan.map((p) => [p.keep, p.merge]), [['a', 'c'], ['b', 'a']]);
+});
