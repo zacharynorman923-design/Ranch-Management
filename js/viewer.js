@@ -12,6 +12,8 @@ const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 
 const MAX_ZOOM = 6;
 
 export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
+  // Tag and buck pickers stay folded into one line until you ask for them.
+  const open = { tags: false, bucks: false };
   ids = ids.filter(Boolean);
   if (!ids.length) return;
   let i = Math.min(Math.max(0, index), ids.length - 1);
@@ -91,8 +93,12 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       line = `<small>Buck match failed: ${esc(ai.reason || '')}</small>`;
     }
     // Every named buck is a toggle, so a photo with two bucks gets both.
-    box.innerHTML = `${line ? `<div>${line}</div>` : ''}
-      <div class="v-row"><small>${mineIds.length ? 'Bucks in this photo (tap to add or remove):' : 'Which buck? Tap each one in the photo:'}</small></div>
+    const summary = `<div class="v-sum"><span>🦌 ${mineIds.length ? `<b>${names.map(esc).join(' + ')}</b>` : '<span class="v-dim">No buck named</span>'}</span>
+      <button type="button" class="v-sum-btn" data-toggle="bucks">${open.bucks ? 'Done ▴' : mineIds.length ? 'Change ▾' : 'Name him ▾'}</button></div>`;
+    const actionLine = line && !(mineIds.length && !p.buckAuto) ? `<div>${line}</div>` : '';
+    if (!open.bucks) { box.innerHTML = `${actionLine}${summary}`; return; }
+    box.innerHTML = `${actionLine}${summary}
+      <div class="v-row"><small>Tap every buck in the photo:</small></div>
       <div class="v-row">${bucks.map((b) => `<button type="button" class="v-tag ${mineIds.includes(b.id) ? 'on' : ''}" data-bk="${esc(b.id)}">${mineIds.includes(b.id) ? '✓ ' : ''}${esc(b.name)}</button>`).join('')}
         <button type="button" class="v-tag" data-bk-new>＋ New buck</button>
         ${bucks.length && relayConfigured() && !mineIds.length ? '<button type="button" class="v-tag" data-bk-ask>🤖 Ask AI</button>' : ''}</div>
@@ -134,12 +140,14 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     const eff = photoTags(p);
     $('[data-ai]').innerHTML = [
       p.aiSummary ? `🤖 ${esc(p.aiSummary)}${p.aiTags ? ` <small>(${esc(p.aiTags)})</small>` : ''}` : p.aiTags === 'empty' ? '🤖 AI saw nothing in this frame' : '',
-      mine ? `✏️ Your tag: <b>${esc(mine)}</b>${p.aiTags ? ' <small>(overrides the AI)</small>' : ''}` : p.aiTags ? '<small>Wrong? Tap the right tag below.</small>' : '',
+      mine ? `<small>✏️ Your tags override the AI's.</small>` : '',
     ].filter(Boolean).join('<br>');
-    $('[data-tags]').innerHTML = FIX_TAGS.map((t) => {
-      const on = t === 'nothing' ? eff.length === 1 && eff[0] === 'empty' : eff.includes(t);
-      return `<button type="button" class="v-tag ${on ? 'on' : ''}" data-fix="${t}">${t}</button>`;
-    }).join('');
+    $('[data-tags]').innerHTML = `<div class="v-sum"><span>🏷 ${eff.length ? esc(eff.filter((t) => t !== 'empty').join(', ') || 'nothing in it') : '<span class="v-dim">no tags</span>'}</span>
+      <button type="button" class="v-sum-btn" data-toggle="tags">${open.tags ? 'Done ▴' : 'Edit ▾'}</button></div>
+      ${open.tags ? `<div class="v-row">${FIX_TAGS.map((t) => {
+        const on = t === 'nothing' ? eff.length === 1 && eff[0] === 'empty' : eff.includes(t);
+        return `<button type="button" class="v-tag ${on ? 'on' : ''}" data-fix="${t}">${t}</button>`;
+      }).join('')}</div>` : ''}`;
     $('[data-okay]').hidden = !needsReview(p);
     renderBuck(p, eff);
     renderCensus(p);
@@ -253,6 +261,8 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       if (k > 0) setTimeout(() => show(k), 350);
       return;
     }
+    const tg = e.target.closest('[data-toggle]');
+    if (tg) { open[tg.dataset.toggle] = !open[tg.dataset.toggle]; renderInfo(); return; }
     const cnt = e.target.closest('[data-cnt],[data-cnt-reset]');
     if (cnt) {
       const p = db.get('photos', ids[i]);
