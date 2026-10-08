@@ -76,6 +76,7 @@ export async function matchBuck(env, body) {
 
 const SORT_SYSTEM = `${SYSTEM}
 You may also be given several new photos at once. Sort them: put photos of the same buck in the same group. A photo can show more than one buck: list each buck in it separately. Use a named buck's id when the photo is that buck, a new group label ("new1", "new2", …) for a buck that isn't named yet (the same label for every photo of that same buck), or "unsure" when the rack can't be compared.
+Photos taken by the same camera a few minutes apart are marked as one visit and given in the order they were taken. Treat a visit like frames of a video: the deer in it are usually the same few animals moving around, so follow each one from shot to shot by position, movement, body and whatever of his rack shows, and keep the same group for the same deer through the whole visit. Identify each deer from the shot that shows his rack best, then carry that to his other shots in the visit, including ones where his head is down, turned or blurred. When you know a deer in a shot only by following him from another shot of the visit (not from his rack in that shot), give that shot's number in tracked_from. Bucks can swap places or walk in and out of frame: only carry an identity when the deer is plainly the same animal, and never carry one between different visits.
 For each new group, suggest a short name from the most distinctive feature of the rack (or body) a hunter would use (e.g. "Split Brow 8", "Tall 10", "Drop Tine", "Wide 9", "Kicker 7"), and pick the photo that shows the rack best. Names describe the deer only: never words like Night, Foggy, Misty, Rainy, Dark, Blurry, IR, Day, Morning, Evening, Feeder or Cam.`;
 
 const DEDUPE_SYSTEM = `${SYSTEM}
@@ -186,13 +187,14 @@ export async function sortBucks(env, body) {
               items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['rack', 'where', 'box', 'group', 'confidence'],
+                required: ['rack', 'where', 'box', 'group', 'confidence', 'tracked_from'],
                 properties: {
                   rack: { type: 'string', description: 'The rack in a few words, e.g. "main-frame 8, split left brow, ~16 in".' },
                   where: { type: 'string', description: 'Where this buck is in the photo, in a few words a person would use: "left", "right, in front", "center, behind the feeder", "far back left".' },
                   box: { type: 'array', items: { type: 'integer' }, description: 'Box around the whole deer (antler tips to hooves) as [left, top, right, bottom] in pixels of this photo, measured from its top-left corner. The photo\'s size in pixels is given with it.' },
                   group: { type: 'string', enum: groups },
                   confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+                  tracked_from: { type: 'integer', description: 'If you know this deer only by following him from another shot of the same visit, that shot\'s new-photo number; otherwise 0.' },
                 },
               },
             },
@@ -223,8 +225,15 @@ export async function sortBucks(env, body) {
       for (const r of b.refs) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r } });
     }
   } else content.push({ type: 'text', text: 'No bucks are named yet.' });
-  content.push({ type: 'text', text: `New photos to sort (${photos.length}):` });
+  // Shots from one visit (same camera, minutes apart) arrive together, oldest first.
+  const visit = photos.map((_, i) => visitOf(body.visits, i));
+  const visitCount = new Set(visit).size;
+  content.push({ type: 'text', text: `New photos to sort (${photos.length}${visitCount < photos.length ? `, in ${visitCount} visit${visitCount === 1 ? '' : 's'}` : ''}):` });
   photos.forEach((ph, i) => {
+    if (visitCount < photos.length && visit[i] !== visit[i - 1]) {
+      const shots = visit.map((v, j) => (v === visit[i] ? j + 1 : 0)).filter(Boolean);
+      content.push({ type: 'text', text: shots.length > 1 ? `Visit ${visit[i]}: new photos ${shots[0]}–${shots[shots.length - 1]}, ${shots.length} shots in a row from one camera, in the order taken. Follow each deer through them.` : `Visit ${visit[i]}: new photo ${shots[0]} on its own.` });
+    }
     const sz = Array.isArray(body.sizes?.[i]) ? body.sizes[i].map(Number) : null;
     content.push({ type: 'text', text: `New photo ${i + 1}${sz ? `, ${sz[0]} × ${sz[1]} pixels` : ''}${body.notes?.[i] ? ` (${String(body.notes[i]).slice(0, 80)})` : ''}:` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: ph } });
@@ -240,12 +249,44 @@ export async function sortBucks(env, body) {
   });
   if (res.stop_reason === 'refusal') throw Object.assign(new Error('The model declined to sort these photos'), { status: 422 });
   const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
-  // No antlers to compare means no group, whatever the model said.
-  for (const p of out.photos || []) if (!p.antlers_visible) for (const b of p.bucks || []) { b.group = 'unsure'; b.confidence = 'low'; }
+  keepTracked(out, visit);
   // Pixel boxes → each photo's own proportions (0–1000), marked as the new format.
   for (const p of out.photos || []) {
     const sz = Array.isArray(body.sizes?.[p.photo - 1]) ? body.sizes[p.photo - 1] : null;
     for (const b of p.bucks || []) { b.box = sz ? pixelBoxToNorm(b.box, sz[0], sz[1]) : null; if (b.box) b.box_v = 2; }
   }
   return { model, result: out };
+}
+
+/** body.visits[i] → visit number of photo i (1-based); every photo its own visit when missing. */
+function visitOf(visits, i) {
+  const v = Array.isArray(visits) ? Number(visits[i]) : NaN;
+  return Number.isInteger(v) && v > 0 ? v : 1000 + i;
+}
+
+/**
+ * No antlers to compare means no group, whatever the model said — unless the
+ * deer was followed from another shot of the same visit where his rack showed
+ * and he got the same group. Those keep it (at most medium, unless the shot
+ * they were followed from was high) and are marked tracked.
+ */
+export function keepTracked(out, visit) {
+  const byNum = new Map((out.photos || []).map((p) => [p.photo, p]));
+  const sameVisit = (a, b) => a !== b && visit[a - 1] != null && visit[a - 1] === visit[b - 1];
+  for (const p of out.photos || []) {
+    for (const b of p.bucks || []) {
+      const from = Number(b.tracked_from) || 0;
+      const src = sameVisit(from, p.photo) ? byNum.get(from) : null;
+      const anchor = src?.antlers_visible ? (src.bucks || []).find((x) => x.group === b.group && !(Number(x.tracked_from) > 0)) : null;
+      if (from && b.group !== 'unsure' && anchor) {
+        b.tracked = from;
+        if (anchor.confidence !== 'high' && b.confidence === 'high') b.confidence = 'medium';
+        if (anchor.confidence === 'low') b.confidence = 'low';
+      } else {
+        if (from) b.tracked_from = 0;
+        if (!p.antlers_visible) { b.group = 'unsure'; b.confidence = 'low'; }
+      }
+    }
+  }
+  return out;
 }

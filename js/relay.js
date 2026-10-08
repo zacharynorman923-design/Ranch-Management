@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage, imageSize } from './photos.js';
-import { deerCounts, planBuckSort, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
+import { deerCounts, planBuckSort, sortBatches, planVisitCarry, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -272,20 +272,22 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
   if (!db.settings().relayInfo?.sources?.buckSort) return null;
   const out = { sorted: 0, filed: 0, suggested: 0, newBucks: 0 };
   for (let k = 0; k < batches; k++) {
-    const todo = unsortedBuckPhotos({ all: all && k === 0 }).slice(0, SORT_BATCH);
-    if (!todo.length) break;
+    // A whole visit at a time (same camera, minutes apart), in the order taken,
+    // so the AI can follow each deer from shot to shot.
+    const [batch] = sortBatches(unsortedBuckPhotos({ all: all && k === 0 }), { max: SORT_BATCH });
+    if (!batch) break;
     const roster = await buckRoster(2); // rebuilt each batch, so a buck found in batch 1 can collect more in batch 2
-    const photos = [], ids = [], notes = [], sizes = [];
-    for (const p of todo) {
-      const u = await photoURL(p.id);
-      if (!u) continue;
+    const photos = [], ids = [], notes = [], sizes = [], visits = [];
+    for (const [i, id] of batch.ids.entries()) {
+      const p = db.get('photos', id), u = await photoURL(id);
+      if (!u) { await db.put('photos', { ...p, buckSortAt: new Date().toISOString() }); continue; } // no image: don't block the queue
       const small = await shrinkImage(u, 900);
-      photos.push(small); ids.push(p.id); sizes.push(await imageSize(small));
+      photos.push(small); ids.push(id); sizes.push(await imageSize(small)); visits.push(batch.visits[i]);
       notes.push([db.get('devices', p.device)?.name, p.date, p.time].filter(Boolean).join(' '));
     }
-    if (!photos.length) break;
+    if (!photos.length) continue;
     let r;
-    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes, sizes } }); } catch (err) { if (err.status === 429 || err instanceof TypeError) break; throw err; }
+    try { r = await call('/buck-sort', { method: 'POST', body: { photos, bucks: roster, notes, sizes, visits } }); } catch (err) { if (err.status === 429 || err instanceof TypeError) break; throw err; }
     const plan = planBuckSort(r.result, ids, roster.map((b) => b.id));
     const now = new Date().toISOString();
     const names = new Set(db.all('bucks').map((b) => String(b.name).toLowerCase()));
@@ -306,7 +308,10 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
       // Every buck the AI found in this photo: named ones and new groups.
       const found = [...plan.assign.filter((x) => x.id === id).map((x) => x.buck), ...plan.newBucks.filter((x) => x.photoIds.includes(id)).map((x) => newId[x.group])];
       const sgt = plan.suggest.find((x) => x.id === id);
-      if (found.length) { Object.assign(w, withBucks(w, [...photoBucks(w), ...found])); w.buckAuto = true; out.filed++; }
+      if (found.length) {
+        Object.assign(w, withBucks(w, [...photoBucks(w), ...found])); w.buckAuto = true; out.filed++;
+        if (plan.tracked[id]?.length === found.length) w.buckVia = 'visit'; // known only from his other shots in the visit
+      }
       else if (sgt) { const sp = plan.spots[id]?.[sgt.buck]; w.buckAI = { match: sgt.buck, confidence: sgt.confidence, reason: `Auto-sort: ${plan.rack[id] || 'similar rack'}`, rack: plan.rack[id] || '', where: sp?.where || '', box: sp?.box || null, bv: sp?.bv || 0, at: now }; out.suggested++; }
       // Where each buck is in this photo (keeps places you set yourself).
       const spots = plan.spots[id] || {};
@@ -320,6 +325,15 @@ export async function sortPendingBucks({ batches = 2, all = false } = {}) {
     });
     await db.putMany('photos', writes);
     out.sorted += ids.length;
+    // Shots the AI couldn't place, in a visit that's all one buck: they're him too.
+    const days = new Set(writes.flatMap((p) => [p.date, C.addDays(p.date, -1), C.addDays(p.date, 1)]));
+    const devs = new Set(writes.map((p) => p.device));
+    const near = db.all('photos').filter((p) => days.has(p.date) && devs.has(p.device) && (photoBucks(p).length || photoTags(p).includes('buck')));
+    const carry = planVisitCarry(near, ids);
+    if (carry.length) {
+      await db.putMany('photos', carry.map((c) => ({ ...withBucks(db.get('photos', c.id), [c.buck]), buckAuto: true, buckVia: 'visit' })));
+      out.filed += carry.length;
+    }
   }
   await db.saveSettings({ buckSortLast: { ...out, at: new Date().toISOString() } });
   return out;

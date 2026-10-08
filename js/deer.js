@@ -181,7 +181,7 @@ export function cameraCensus({ photos, uniqueBucks, days, acres, gapMin = 0 }) {
  */
 export function planBuckSort(result, photoIds, existingIds) {
   const known = new Set(existingIds);
-  const out = { assign: [], suggest: [], newBucks: [], rack: {}, spots: {} };
+  const out = { assign: [], suggest: [], newBucks: [], rack: {}, spots: {}, tracked: {} };
   const groups = new Map();
   for (const p of result?.photos || []) {
     const id = photoIds[p.photo - 1];
@@ -190,8 +190,10 @@ export function planBuckSort(result, photoIds, existingIds) {
     const entries = Array.isArray(p.bucks) ? p.bucks : [{ group: p.group, rack: p.rack, confidence: p.confidence }];
     const racks = entries.map((b) => b.rack).filter(Boolean);
     if (racks.length) out.rack[id] = racks.join(' + ');
-    if (p.antlers_visible === false) continue;
     for (const b of entries) {
+      // No rack in this shot: only a buck followed from another shot of the visit counts.
+      if (p.antlers_visible === false && !b.tracked) continue;
+      if (b.tracked) (out.tracked[id] ||= []).push(b.group);
       // Where each buck is in the frame, so a photo with two bucks says which is which.
       if (b.group && b.group !== 'unsure' && (b.where || b.box)) (out.spots[id] ||= {})[b.group] = { where: String(b.where || '').trim(), box: normBox(b.box), ...(b.box_v ? { bv: b.box_v } : {}) };
       if (b.group === 'unsure' || b.confidence === 'low') continue;
@@ -203,6 +205,61 @@ export function planBuckSort(result, photoIds, existingIds) {
     const meta = (result.new_bucks || []).find((b) => b.group === group) || {};
     const best = photoIds[(meta.best_photo || 0) - 1];
     out.newBucks.push({ group, name: String(meta.name || '').trim() || `Buck ${out.newBucks.length + 1}`, rack: meta.rack || out.rack[ids[0]] || '', refId: ids.includes(best) ? best : ids[0], photoIds: ids });
+  }
+  return out;
+}
+
+/** Shots this close together on one camera are one visit for auto-sort. */
+export const SORT_GAP_MIN = 5;
+/**
+ * Unsorted buck photos → batches for the AI, a whole visit at a time so it can
+ * follow each deer from shot to shot: newest visit first, each visit's shots
+ * in the order taken. A batch holds up to `max` photos; a visit bigger than
+ * that goes alone, split into pieces of at most `hard`.
+ * Returns [{ ids, visits }] with visits[i] the visit number (1-based, per batch) of ids[i].
+ */
+export function sortBatches(photos, { max = 10, hard = 12, gapMin = SORT_GAP_MIN } = {}) {
+  const at = (id, vs) => photoTime(vs.get(id))?.getTime() ?? 0;
+  const byId = new Map(photos.map((p) => [p.id, p]));
+  const visits = censusVisits(photos, gapMin).map((v) => v.ids)
+    .sort((a, b) => at(b[b.length - 1], byId) - at(a[a.length - 1], byId));
+  const out = [];
+  let cur = null;
+  for (const ids of visits) {
+    for (let i = 0; i < ids.length; i += hard) {
+      const piece = ids.slice(i, i + hard);
+      if (!cur || cur.ids.length + piece.length > max) { cur = { ids: [], visits: [], n: 0 }; out.push(cur); }
+      cur.n++;
+      for (const id of piece) { cur.ids.push(id); cur.visits.push(cur.n); }
+    }
+  }
+  return out.map(({ ids, visits: v }) => ({ ids, visits: v }));
+}
+
+/**
+ * Carry a buck to the rest of his visit: when every filed shot in a visit is
+ * the same one buck and no shot shows more than one, the shots the AI just
+ * looked at but couldn't place (head down, turned away) are him too.
+ * photos: buck photos around the batch; ids: the ones just sorted.
+ * Returns [{ id, buck, shots }] — shots is how many of his shots in the visit back it.
+ */
+export function planVisitCarry(photos, ids, gapMin = SORT_GAP_MIN) {
+  const fresh = new Set(ids);
+  const byId = new Map(photos.map((p) => [p.id, p]));
+  const out = [];
+  for (const v of censusVisits(photos, gapMin)) {
+    if (v.ids.length < 2) continue;
+    const ps = v.ids.map((id) => byId.get(id));
+    const filed = new Set(ps.flatMap((p) => photoBucks(p)));
+    if (filed.size !== 1 || ps.some((p) => Math.max(photoDeer(p).buck, p.aiCounts?.buck || 0) > 1 || photoBucks(p).length > 1)) continue;
+    const [buck] = filed;
+    const shots = ps.filter((p) => hasBuck(p, buck)).length;
+    for (const p of ps) {
+      if (!fresh.has(p.id) || photoBucks(p).length) continue;
+      const m = p.buckAI?.match; // you said no, or the AI thinks it's a different buck: leave it
+      if (m && !['unsure', 'error', 'new', buck].includes(m)) continue;
+      out.push({ id: p.id, buck, shots });
+    }
   }
   return out;
 }
@@ -273,7 +330,7 @@ export function bucksLabel(p, nameOf) {
 
 /* ------------------------------- start over -------------------------------- */
 /** Photo fields the buck tracker and census write (what a reset clears and an undo restores). */
-export const BUCK_FIELDS = ['buck', 'bucks', 'buckAuto', 'buckSortAt', 'buckAI', 'buckRack', 'buckSpots', 'review', 'counts'];
+export const BUCK_FIELDS = ['buck', 'bucks', 'buckAuto', 'buckSortAt', 'buckAI', 'buckRack', 'buckSpots', 'buckVia', 'review', 'counts'];
 
 /**
  * What a "start over" removes.
@@ -293,7 +350,7 @@ export function planReset(bucks, photos, { confirmed = false, reviews = false } 
     const keep = p.buckAuto ? [] : photoBucks(p).filter((id) => !gone.has(id));
     if (keep.length !== photoBucks(p).length) Object.assign(patch, { buck: keep[0] || '', bucks: keep });
     if (p.buckAuto) patch.buckAuto = false;
-    for (const k of ['buckSortAt', 'buckAI', 'buckRack']) if (p[k] != null && p[k] !== '') patch[k] = null;
+    for (const k of ['buckSortAt', 'buckAI', 'buckRack', 'buckVia']) if (p[k] != null && p[k] !== '') patch[k] = null;
     if (p.buckSpots) {
       const spots = Object.fromEntries(Object.entries(p.buckSpots).filter(([id, s]) => s.by === 'you' && keep.includes(id)));
       if (Object.keys(spots).length !== Object.keys(p.buckSpots).length) patch.buckSpots = Object.keys(spots).length ? spots : null;

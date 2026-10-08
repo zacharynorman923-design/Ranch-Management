@@ -84,7 +84,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     const aiBuck = ai && !mineIds.includes(ai.match) && db.get('bucks', ai.match);
     let line = '';
     if (mineIds.length && p.buckAuto) {
-      line = `🤖 Auto-sorted as <b>${esc(label)}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}
+      line = `🤖 Auto-sorted as <b>${esc(label)}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}${p.buckVia === 'visit' ? '<br><small>Followed from his other shots in this visit; his rack doesn\'t show well here.</small>' : ''}
         <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, that's right</button><button type="button" class="v-tag" data-bk-clear>✕ Wrong, clear it</button></div>`;
     } else if (mineIds.length) {
       line = `🦌 In this photo: <b>${names.map(esc).join(' + ')}</b>`;

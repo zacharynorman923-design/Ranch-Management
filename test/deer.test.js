@@ -213,3 +213,51 @@ test('start over: clears the AI work, keeps yours unless asked', () => {
   const p2 = all.patches.find((x) => x.id === 'p2').patch;
   assert.deepEqual(p2, { buck: '', bucks: [], buckSortAt: null, buckSpots: null, review: null, counts: null });
 });
+
+test('auto-sort batches: whole visits, newest first, shots in order', () => {
+  const ph = (id, device, time, date = '2026-10-05') => ({ id, device, date, time });
+  const photos = [
+    ph('a3', 'cam1', '06:46'), ph('a1', 'cam1', '06:40'), ph('a2', 'cam1', '06:43'), // one visit
+    ph('b1', 'cam2', '06:41'), ph('b2', 'cam2', '06:44'), // another camera
+    ph('c1', 'cam1', '19:10'), // later visit, same camera
+    ph('d1', 'cam1', '07:30', '2026-10-04'),
+  ];
+  const bs = D.sortBatches(photos, { max: 5 });
+  assert.deepEqual(bs[0], { ids: ['c1', 'a1', 'a2', 'a3'], visits: [1, 2, 2, 2] });
+  // b's visit wouldn't fit after a's: it starts the next batch rather than splitting.
+  assert.deepEqual(bs[1], { ids: ['b1', 'b2', 'd1'], visits: [1, 1, 2] });
+  // A visit bigger than a batch goes alone, cut into pieces of `hard`.
+  const big = Array.from({ length: 7 }, (_, i) => ph(`x${i}`, 'cam1', `08:0${i}`));
+  const bb = D.sortBatches(big, { max: 4, hard: 5 });
+  assert.deepEqual(bb.map((b) => b.ids.length), [5, 2]);
+  assert.deepEqual(bb[0].ids, ['x0', 'x1', 'x2', 'x3', 'x4']);
+});
+
+test('buck carries through a one-buck visit, not past a second buck or your no', () => {
+  const ph = (id, time, extra = {}) => ({ id, device: 'cam1', date: '2026-10-05', time, tags: 'buck', ...extra });
+  const photos = [
+    ph('p1', '06:40', { buck: 'b1', bucks: ['b1'] }),
+    ph('p2', '06:42', { buckAI: { match: 'unsure' } }),
+    ph('p3', '06:43'),
+    ph('p4', '06:44', { buckAI: { match: 'rejected' } }),
+    ph('p5', '07:30'), // its own visit
+    // A visit with two different bucks: nothing carries.
+    ph('q1', '09:00', { buck: 'b1', bucks: ['b1'] }), ph('q2', '09:01', { buck: 'b2', bucks: ['b2'] }), ph('q3', '09:02'),
+    // A shot showing two bucks: nothing carries.
+    ph('r1', '11:00', { buck: 'b1', bucks: ['b1'] }), ph('r2', '11:01', { aiCounts: { buck: 2 } }),
+  ];
+  const c = D.planVisitCarry(photos, ['p2', 'p3', 'p4', 'p5', 'q3', 'r2']);
+  assert.deepEqual(c, [{ id: 'p2', buck: 'b1', shots: 1 }, { id: 'p3', buck: 'b1', shots: 1 }]);
+  // Only shots just sorted get carried to.
+  assert.deepEqual(D.planVisitCarry(photos, ['p5']), []);
+});
+
+test('sort plan: a headless shot keeps a buck only when he was followed through the visit', () => {
+  const plan = D.planBuckSort({ photos: [
+    { photo: 1, antlers_visible: true, bucks: [{ group: 'b1', confidence: 'high' }] },
+    { photo: 2, antlers_visible: false, bucks: [{ group: 'b1', confidence: 'high', tracked: 1 }] },
+    { photo: 3, antlers_visible: false, bucks: [{ group: 'b1', confidence: 'high' }] },
+  ] }, ['p1', 'p2', 'p3'], ['b1']);
+  assert.deepEqual(plan.assign.map((a) => a.id), ['p1', 'p2']);
+  assert.deepEqual(plan.tracked, { p2: ['b1'] });
+});

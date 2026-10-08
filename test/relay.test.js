@@ -8,6 +8,7 @@ import worker from '../relay/src/index.js';
 import * as L from '../relay/src/lib.js';
 import { pollAmbient } from '../relay/src/weather.js';
 import { classifyPending } from '../relay/src/classify.js';
+import { keepTracked } from '../relay/src/buckmatch.js';
 
 /* Minimal D1 look-alike: prepare().bind().first/all/run and batch(). */
 function fakeD1() {
@@ -468,7 +469,7 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   t.after(() => { globalThis.fetch = realFetch; });
   const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k' };
   const img = 'data:image/jpeg;base64,' + 'C'.repeat(2000);
-  const r = await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [img, img, img, img], sizes: [[900, 675], [900, 675], [900, 675], [900, 675]], bucks: [{ id: 'b1', name: 'Big 8', refs: [img, img, img] }] }), headers: { 'Content-Type': 'application/json' } });
+  const r = await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [img, img, img, img], sizes: [[900, 675], [900, 675], [900, 675], [900, 675]], visits: [1, 1, 1, 2], bucks: [{ id: 'b1', name: 'Big 8', refs: [img, img, img] }] }), headers: { 'Content-Type': 'application/json' } });
   assert.equal(r.status, 200);
   const out = (await r.json()).result;
   assert.equal(out.photos[3].bucks[0].group, 'unsure');
@@ -478,7 +479,13 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   assert.deepEqual(out.photos[0].bucks[0].box, [40, 400, 340, 400]);
   assert.equal(out.photos[0].bucks[0].box_v, 2);
   assert.match(sent[0].messages[0].content.find((c) => c.text?.startsWith('New photo 1')).text, /900 × 675 pixels/);
-  assert.deepEqual(sent[0].output_config.format.schema.properties.photos.items.properties.bucks.items.required, ['rack', 'where', 'box', 'group', 'confidence']);
+  assert.deepEqual(sent[0].output_config.format.schema.properties.photos.items.properties.bucks.items.required, ['rack', 'where', 'box', 'group', 'confidence', 'tracked_from']);
+  // Shots of one visit are labeled as a run to follow the deer through.
+  const texts = sent[0].messages[0].content.filter((c) => c.type === 'text').map((c) => c.text);
+  assert.ok(texts.includes('New photos to sort (4, in 2 visits):'));
+  assert.ok(texts.some((x) => /^Visit 1: new photos 1–3, 3 shots in a row/.test(x)));
+  assert.ok(texts.includes('Visit 2: new photo 4 on its own.'));
+  assert.match(sent[0].system, /Treat a visit like frames of a video/);
   assert.match(sent[0].system, /say which one you mean every time/);
   assert.equal(out.new_bucks[0].name, 'Tall 10');
   const body = sent[0];
@@ -486,6 +493,26 @@ test('buck-sort: groups a batch into named and new bucks; no antlers means unsur
   assert.deepEqual(body.output_config.format.schema.properties.photos.items.properties.bucks.items.properties.group.enum, ['b1', 'new1', 'new2', 'new3', 'new4', 'unsure']);
   assert.match(body.system, /Split Brow 8/);
   assert.equal((await call(env, '/buck-sort', { method: 'POST', body: JSON.stringify({ photos: [] }) })).status, 400);
+});
+
+test('buck-sort: a deer followed through a visit keeps his group without a clear rack', () => {
+  const out = { photos: [
+    { photo: 1, antlers_visible: true, bucks: [{ group: 'b1', confidence: 'high', tracked_from: 0 }] },
+    { photo: 2, antlers_visible: false, bucks: [{ group: 'b1', confidence: 'high', tracked_from: 1 }] }, // head down, same visit: kept
+    { photo: 3, antlers_visible: false, bucks: [{ group: 'b1', confidence: 'high', tracked_from: 1 }] }, // a different visit: dropped
+    { photo: 4, antlers_visible: false, bucks: [{ group: 'b1', confidence: 'high', tracked_from: 2 }] }, // from a shot that was itself followed: dropped
+    { photo: 5, antlers_visible: true, bucks: [{ group: 'new1', confidence: 'medium', tracked_from: 0 }] },
+    { photo: 6, antlers_visible: false, bucks: [{ group: 'new1', confidence: 'high', tracked_from: 5 }] }, // no better than the shot he came from
+    { photo: 7, antlers_visible: false, bucks: [{ group: 'b1', confidence: 'high', tracked_from: 5 }] }, // a different deer there: dropped
+  ] };
+  keepTracked(out, [1, 1, 2, 1, 3, 3, 3]);
+  const g = (n) => out.photos[n - 1].bucks[0];
+  assert.deepEqual([g(2).group, g(2).confidence, g(2).tracked], ['b1', 'high', 1]);
+  assert.deepEqual([g(3).group, g(3).tracked_from, g(3).tracked], ['unsure', 0, undefined]);
+  assert.equal(g(4).group, 'unsure');
+  assert.deepEqual([g(6).group, g(6).confidence], ['new1', 'medium']);
+  assert.equal(g(7).group, 'unsure');
+  assert.equal(g(1).tracked, undefined);
 });
 
 test('buck-dedupe: compares named bucks, ignores conditions, drops self-pairs', { timeout: 30000 }, async (t) => {
