@@ -2,26 +2,40 @@
    the picture from each buck's saved box (p.buckSpots). The overlay is sized
    to the image as laid out, so it lines up whatever the screen size. */
 import * as db from './db.js';
-import { photoBucks, buckWhere } from './deer.js';
+import { photoBucks, buckWhere, normBox } from './deer.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const COLORS = ['#F59E0B', '#38BDF8', '#F472B6', '#A3E635', '#C084FC'];
 
-/** Outline boxes for the bucks in a photo. only: show just this buck (compare screen). */
-export function spotBoxes(p, { only = null, min = 2 } = {}) {
+const boxHTML = (box, label, color, cls = '') => {
+  const [x, y, w, h] = box.map((v) => `${(v * 100).toFixed(1)}%`);
+  return `<div class="spot ${cls} ${box[1] < 0.06 ? 'low' : ''}" style="left:${x};top:${y};width:${w};height:${h};--c:${color}"><span>${esc(label)}</span></div>`;
+};
+/** The AI's guess at a buck not yet filed on this photo, and where it thinks he is. */
+function guessSpot(p) {
+  const ai = p?.buckAI, b = ai?.match && db.get('bucks', ai.match);
+  if (!b || photoBucks(p).includes(b.id)) return null;
+  const box = drawable({ box: normBox(ai.box), bv: ai.box_v || ai.bv || 0, by: 'ai' });
+  return box ? { box, name: b.name } : null;
+}
+/**
+ * Outline boxes for the bucks in a photo.
+ *   only:  just this buck (compare screen)
+ *   min:   how many bucks the photo needs before any are drawn (1 = always)
+ *   guess: also the AI's suggested buck, dashed, labeled "Name?"
+ */
+export function spotBoxes(p, { only = null, min = 2, guess = false } = {}) {
   const ids = photoBucks(p);
-  if (!only && ids.length < min) return '';
+  const g = guess && !only ? guessSpot(p) : null;
+  if (!only && ids.length + (g ? 1 : 0) < min) return '';
   return ids.map((id, i) => {
     if (only && id !== only) return '';
     const box = drawable(p.buckSpots?.[id]);
-    if (!box) return '';
-    const [x, y, w, h] = box.map((v) => `${(v * 100).toFixed(1)}%`);
-    const name = db.get('bucks', id)?.name || 'Buck';
-    return `<div class="spot ${box[1] < 0.06 ? 'low' : ''}" style="left:${x};top:${y};width:${w};height:${h};--c:${COLORS[i % COLORS.length]}"><span>${esc(name)}</span></div>`;
-  }).join('');
+    return box ? boxHTML(box, db.get('bucks', id)?.name || 'Buck', COLORS[i % COLORS.length]) : '';
+  }).join('') + (g ? boxHTML(g.box, `${g.name}?`, COLORS[ids.length % COLORS.length], 'guess') : '');
 }
-/** Does this photo have outlines worth drawing? */
-export const hasSpots = (p, only = null) => photoBucks(p).filter((id) => (!only || id === only) && drawable(p.buckSpots?.[id])).length > 0 && (only || photoBucks(p).length > 1);
+/** Does this photo have outlines worth drawing (same options as spotBoxes)? */
+export const hasSpots = (p, only = null, { min = 2, guess = false } = {}) => !!p && spotBoxes(p, { only, min, guess }) !== '';
 /** Boxes are drawn when you placed them or they came in the pixel format (bv 2);
     older AI boxes measured height on the wrong scale and sat too high. */
 export const drawable = (spot) => (spot?.box && (spot.by === 'you' || spot.bv >= 2) ? spot.box : null);
@@ -40,9 +54,9 @@ export const boxesOff = () => !!db.settings().hideBoxes;
 const syncBoxes = () => document.documentElement.classList.toggle('no-spots', boxesOff());
 const toggleLabel = () => (boxesOff() ? '▢ Show boxes' : '▣ Hide boxes');
 /** The on/off button for a photo, or '' when it has no boxes to show. extra: more classes. */
-export function boxToggle(p, { only = null, extra = '' } = {}) {
+export function boxToggle(p, { only = null, extra = '', min = 2, guess = false } = {}) {
   syncBoxes();
-  if (!p || !hasSpots(p, only)) return '';
+  if (!p || !hasSpots(p, only, { min, guess })) return '';
   return `<button type="button" class="box-toggle ${extra}" data-box-toggle aria-pressed="${!boxesOff()}">${toggleLabel()}</button>`;
 }
 /** Turn boxes back on (when you're about to place one). */
