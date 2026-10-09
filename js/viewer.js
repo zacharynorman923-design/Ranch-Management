@@ -12,6 +12,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const FIX_TAGS = ['buck', 'doe', 'fawn', 'hog', 'javelina', 'cattle', 'coyote', 'predator', 'turkey', 'bird', 'person', 'vehicle', 'nothing'];
 const MAX_ZOOM = 6;
 
+/** A horizontal swipe: far enough, or a quick flick. */
+const isSwipe = (dx, dy, ms) => Math.abs(dx) > 1.5 * Math.abs(dy) && (Math.abs(dx) > 50 || (Math.abs(dx) > 25 && ms < 250));
+/** A photo still waiting on you: an auto-sorted buck to confirm, or an AI guess to say yes or no to. */
+const needsBuckCheck = (p) => !!p && ((photoBucks(p).length > 0 && p.buckAuto) || (!!p.buckAI?.match && !!db.get('bucks', p.buckAI.match) && !photoBucks(p).includes(p.buckAI.match)));
+
 export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
   // Tag and buck pickers stay folded into one line until you ask for them.
   const open = { tags: false, bucks: false };
@@ -37,7 +42,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       <button type="button" class="v-ok" data-okay hidden>✓ OK, that was us</button>
       <div class="v-tags" data-tags></div>
       <div class="v-buck" data-buck hidden></div>
-      <div class="v-actions"><span class="v-count" data-count></span><span class="v-hd" data-hd></span>
+      <div class="v-actions"><span class="v-pager"><button type="button" class="v-step" data-step="-1" aria-label="Previous photo">‹</button><span class="v-count" data-count></span><button type="button" class="v-step" data-step="1" aria-label="Next photo">›</button></span><span class="v-hd" data-hd></span>
         <a class="v-btn" data-save download>Save</a>${onEdit ? '<button type="button" class="v-btn" data-edit>Edit details</button>' : ''}</div>
     </div>`;
   document.body.appendChild(dlg);
@@ -164,6 +169,9 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;
     $('[data-next]').hidden = i === ids.length - 1;
+    dlg.querySelector('.v-pager').hidden = ids.length < 2;
+    $('[data-step="-1"]').disabled = i === 0;
+    $('[data-step="1"]').disabled = i === ids.length - 1;
   };
   const show = async (k) => {
     i = k;
@@ -236,7 +244,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     if (g?.kind !== 'drag') return;
     const dx = p.x - g.p0.x, dy = p.y - g.p0.y;
     const quickTap = g.moved < 10 && Date.now() - g.t0 < 350;
-    const wasZoomed = g.from.s > 1.01;
+    const wasZoomed = g.from.s > 1.01, ms = Date.now() - g.t0;
     g = null;
     if (quickTap && moveFor) {
       // Placing a box: put it where you tapped on the photo.
@@ -260,11 +268,23 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       return;
     }
     if (wasZoomed) return;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
+    if (isSwipe(dx, dy, ms)) go(dx < 0 ? 1 : -1);
     else if (dy > 120) close();
     else { tx = 0; ty = 0; apply(true); }
   };
   stage.addEventListener('pointerup', end);
+  // Swipe anywhere else too (the info panel covers much of the photo while
+  // you're checking bucks). A swipe that starts on a button doesn't press it.
+  let sw = null, swiped = false;
+  dlg.addEventListener('pointerdown', (e) => { sw = stage.contains(e.target) || e.target.closest('input, select, textarea') ? null : { x: e.clientX, y: e.clientY, t: Date.now() }; });
+  dlg.addEventListener('pointerup', (e) => {
+    if (!sw) return;
+    const dx = e.clientX - sw.x, dy = e.clientY - sw.y, dt = Date.now() - sw.t;
+    sw = null;
+    if (isSwipe(dx, dy, dt)) { swiped = true; setTimeout(() => { swiped = false; }, 400); go(dx < 0 ? 1 : -1); }
+  });
+  dlg.addEventListener('pointercancel', () => { sw = null; });
+  dlg.addEventListener('click', (e) => { if (swiped) { swiped = false; e.stopPropagation(); e.preventDefault(); } }, true);
   stage.addEventListener('pointercancel', end);
   stage.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(local(e), s * (e.deltaY < 0 ? 1.25 : 0.8)); apply(); }, { passive: false });
   img.addEventListener('load', () => { clampPan(); apply(); });
@@ -275,6 +295,8 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     if (e.target.closest('[data-x]')) return close();
     if (e.target.closest('[data-prev]')) return go(-1);
     if (e.target.closest('[data-next]')) return go(1);
+    const st = e.target.closest('[data-step]');
+    if (st) return go(Number(st.dataset.step));
     if (e.target.closest('[data-okay]')) {
       await markPhotosOk([ids[i]]);
       renderInfo();
@@ -331,6 +353,13 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       else if (bk.hasAttribute('data-bk-yes')) await db.put('photos', tagged({ ...withBucks(p, [...cur, p.buckAI.match]), buckAuto: false, ...(p.buckAI.where || p.buckAI.box ? { buckSpots: { ...(p.buckSpots || {}), [p.buckAI.match]: { where: p.buckAI.where || '', box: normBox(p.buckAI.box), bv: p.buckAI.box_v || p.buckAI.bv || 0, by: 'ai' } } } : {}) }));
       else if (bk.hasAttribute('data-bk-no')) await db.put('photos', { ...p, buckAI: { ...p.buckAI, match: 'rejected' } });
       else if (bk.hasAttribute('data-bk-clear')) await db.put('photos', { ...withBucks(p, []), buckAuto: false });
+      // Checked this one: on to the next photo that still needs a yes or no.
+      if (bk.matches('[data-bk-ok],[data-bk-yes],[data-bk-no],[data-bk-clear]')) {
+        renderInfo();
+        const k = ids.findIndex((id, j) => j > i && needsBuckCheck(db.get('photos', id)));
+        if (k > 0) setTimeout(() => { if (dlg.open) show(k); }, 350);
+        return;
+      }
       else if (bk.hasAttribute('data-bk-new')) {
         const name = (prompt('Name this buck (e.g. Big 8, Drop Tine):') || '').trim();
         if (!name) return;
