@@ -91,7 +91,7 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
     let line = '';
     if (mineIds.length && p.buckAuto) {
       line = `🤖 Auto-sorted as <b>${esc(label)}</b>${p.buckRack ? ` <small>(${esc(p.buckRack)})</small>` : ''}${p.buckVia === 'visit' ? '<br><small>Followed from his other shots in this visit; his rack doesn\'t show well here.</small>' : ''}
-        <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, that's right</button><button type="button" class="v-tag" data-bk-clear>✕ Wrong, clear it</button></div>`;
+        <div class="v-row"><button type="button" class="v-tag on" data-bk-ok>✓ Yes, that's right</button><button type="button" class="v-tag" data-bk-clear>✕ Wrong, clear it</button>${mineIds.length === 1 ? `<button type="button" class="v-tag ${moveFor === mineIds[0] ? 'on' : ''}" data-move-box="${esc(mineIds[0])}">📍 ${moveFor === mineIds[0] ? 'tap him…' : 'Box off?'}</button>` : ''}</div>`;
     } else if (mineIds.length) {
       line = `🦌 In this photo: <b>${names.map(esc).join(' + ')}</b>`;
     } else if (aiBuck) {
@@ -163,8 +163,9 @@ export function openViewer(ids, index = 0, { onEdit, census = null } = {}) {
       }).join('')}</div>` : ''}`;
     $('[data-okay]').hidden = !needsReview(p);
     renderBuck(p, eff);
-    $('[data-spots]').innerHTML = spotBoxes(p);
-    $('[data-boxbtn]').innerHTML = boxToggle(p, { extra: 'v-btn' });
+    // Every buck's box, even alone in the photo, plus the AI's guess while you check it.
+    $('[data-spots]').innerHTML = spotBoxes(p, { min: 1, guess: true });
+    $('[data-boxbtn]').innerHTML = boxToggle(p, { extra: 'v-btn', min: 1, guess: true });
     renderCensus(p);
     $('[data-count]').textContent = ids.length > 1 ? `${i + 1} / ${ids.length}` : '';
     $('[data-prev]').hidden = i === 0;

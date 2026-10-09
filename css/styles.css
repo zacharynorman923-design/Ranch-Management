@@ -641,3 +641,7 @@ dialog.viewer.moving::after { content: attr(data-hint); position: absolute; left
 .v-step { font: inherit; font-size: 26px; line-height: 1; width: 44px; height: 40px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.14); color: #fff; }
 .v-step:disabled { opacity: .3; }
 .v-pager .v-count { flex: none; min-width: 3.5em; text-align: center; }
+
+/* The AI's suggested buck: dashed until you say yes */
+.spot.guess { border-style: dashed; }
+.spot.guess span { opacity: .9; }
