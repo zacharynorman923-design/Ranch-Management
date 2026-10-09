@@ -632,3 +632,12 @@ dialog.viewer.moving::after { content: attr(data-hint); position: absolute; left
 .bcmp-boxes, .cr-boxes { position: absolute; font-size: 12px; padding: 5px 10px; border-radius: 14px; border: 0; background: rgba(0,0,0,.55); color: #fff; z-index: 1; }
 .bcmp-boxes { right: 6px; bottom: 6px; }
 .cr-boxes { left: 8px; top: 8px; }
+
+/* Viewer paging on phones: ‹ 3 / 12 › by the counter, and swipes on the panels */
+.v-top, .v-bottom { touch-action: pan-y; }
+.v-pager { display: inline-flex; align-items: center; gap: 2px; flex: 1; }
+.v-pager[hidden] + .v-hd { flex: 1; }
+.v-pager[hidden] { display: none; }
+.v-step { font: inherit; font-size: 26px; line-height: 1; width: 44px; height: 40px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.14); color: #fff; }
+.v-step:disabled { opacity: .3; }
+.v-pager .v-count { flex: none; min-width: 3.5em; text-align: center; }
