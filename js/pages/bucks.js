@@ -5,7 +5,7 @@ import * as C from '../calc.js';
 import * as D from '../deer.js';
 import { esc, n0, n1, n2, stat, pill, listPanel, dateLabel, openForm, toast } from '../ui.js';
 import { photoURL, photoTags } from '../photos.js';
-import { buckRefIds, mergeBucks, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames, resetBuckAI, undoBuckReset, relabelPhotos } from '../relay.js';
+import { buckRefIds, mergeBucks, sizePendingBucks, sortPendingBucks, unsortedBuckPhotos, checkBuckDuplicates, cleanAutoBuckNames, resetBuckAI, undoBuckReset, relabelPhotos } from '../relay.js';
 import { openViewer } from '../viewer.js';
 import { ranchPlace } from '../place.js';
 import { censusNow, reviewCounts, openCensusReview } from '../censusreview.js';
@@ -22,7 +22,7 @@ function patternFor(b) {
   return D.buckPattern(db.all('photos').filter((p) => D.hasBuck(p, b.id)), { lat: pl.lat, lon: pl.lon, today: new Date() });
 }
 
-const ui = { filter: 'all', dupesBusy: false };
+const ui = { filter: 'all', dupesBusy: false, sizeBusy: false };
 const photosOf = (id) => db.all('photos').filter((p) => D.hasBuck(p, id));
 const isPast = (b) => ['harvested', 'gone'].includes(b.status || 'active');
 const plural = (n, w, ws = `${w}s`) => `${n} ${n === 1 ? w : ws}`;
@@ -113,7 +113,12 @@ function dupesHTML() {
 function bucksPanel() {
   const all = db.all('bucks');
   const f = FILTERS.find((x) => x[0] === ui.filter) || FILTERS[0];
-  const shown = all.filter(f[2]).sort((a, b) => (photosOf(b.id).length - photosOf(a.id).length) || String(a.name).localeCompare(b.name));
+  const order = db.settings().buckOrder || 'photos';
+  const byPhotos = (a, b) => (photosOf(b.id).length - photosOf(a.id).length) || String(a.name).localeCompare(b.name);
+  const lastSeen = (b) => photosOf(b.id).reduce((m, p) => { const t = `${p.date} ${p.time || ''}`; return t > m ? t : m; }, '');
+  const shown = all.filter(f[2]).sort(order === 'size' ? (a, b) => D.bySize(a, b) || byPhotos(a, b) : order === 'seen' ? (a, b) => (lastSeen(b) > lastSeen(a) ? 1 : lastSeen(b) < lastSeen(a) ? -1 : byPhotos(a, b)) : byPhotos);
+  const canSize = !!db.settings().relayInfo?.sources?.buckSize;
+  const unsized = shown.filter((b) => !b.size && buckRefIds(b).length).length;
   const canDedupe = !!db.settings().relayInfo?.sources?.buckDedupe;
   const tiles = shown.map((b) => {
     const pt = patternFor(b);
@@ -121,6 +126,7 @@ function bucksPanel() {
     return `<a class="bt-tile ${b.auto ? 'auto' : ''} ${esc(b.status || 'active')}" href="#/bucks?id=${esc(b.id)}">
       <div class="bt-tile-img">${thumb(buckRefIds(b)[0], 'bt-img')}${b.auto || toCheck ? `<span class="bt-flag">🤖 ${toCheck ? `${toCheck} to check` : 'new'}</span>` : ''}${pt.recentDaylight ? '<span class="bt-sun" title="Seen in daylight this week">☀️</span>' : ''}</div>
       <div class="bt-tile-body"><b class="bt-name">${esc(b.name)}</b>
+        ${D.sizeLine(b) ? `<span class="bt-meta bt-size">${esc(D.sizeLine(b))}</span>` : ''}
         <span class="bt-meta">${plural(pt.sightings, 'photo')}${pt.daylight != null ? ` · ☀️ ${Math.round(pt.daylight * 100)}%` : ''}</span>
         <span class="bt-meta">${pt.last ? `last ${esc(dateLabel(pt.last.date).replace(/, \d{4}$/, ''))}` : 'no photos yet'}${isPast(b) ? ` · ${esc(b.status)}` : ''}</span></div>
     </a>`;
@@ -128,6 +134,10 @@ function bucksPanel() {
   return `<section class="panel" id="bucks">
     <div class="panel-head"><h2>Your bucks</h2><button class="btn sm" data-add-buck>＋ Add</button></div>
     <div class="chips bt-filters">${FILTERS.map(([k, l, fn]) => { const n = all.filter(fn).length; return `<button class="chip ${k === f[0] ? 'on' : ''}" data-bfilter="${k}" ${n || k === 'all' ? '' : 'disabled'}>${l} · ${n}</button>`; }).join('')}</div>
+    <div class="bt-order"><small class="muted">Sort</small>${[['photos', 'Most photos'], ['size', '🦌 Biggest'], ['seen', 'Last seen']].map(([k, l]) => `<button class="chip ${order === k ? 'on' : ''}" data-border="${k}">${l}</button>`).join('')}</div>
+    ${order === 'size' && shown.length ? `<p class="small muted bt-size-note">${canSize
+      ? `Sizes are the AI's estimate from each buck's best photos (rough gross B&amp;C inches); points and age you enter win. ${unsized ? `${plural(unsized, 'buck')} not sized yet. ` : ''}<button class="btn sm" data-size-up ${ui.sizeBusy ? 'disabled' : ''}>${ui.sizeBusy ? '📏 Sizing…' : unsized ? `📏 Size up ${unsized}` : '📏 Size up again'}</button>`
+      : 'Ranked by the points in their names and what you entered. For AI size estimates, re-run Deploy relay.'}</p>` : ''}
     ${shown.length >= 2 ? `<div class="bt-dedupe-row">${canDedupe
       ? `<button class="btn" data-dedupe ${ui.dupesBusy ? 'disabled' : ''}>${ui.dupesBusy ? '🤖 Comparing…' : `🤖 Check ${shown.length > 12 ? 'the top 12' : `these ${shown.length}`} for duplicates`}</button>`
       : '<small class="muted">Duplicate checking needs the relay updated (re-run Deploy relay).</small>'}</div>` : ''}
@@ -149,6 +159,7 @@ function buckDetail(b) {
         ${b.auto ? pill('🤖 auto', 'warn') : ''}${isPast(b) ? pill(b.status) : ''}
         <button class="btn sm" data-edit-buck="${esc(b.id)}">Edit</button></div>
       ${b.marks ? `<p class="bd-marks">${esc(b.marks)}</p>` : ''}
+      ${D.sizeLine(b) ? `<p class="bd-size"><b>📏 ${esc(D.sizeLine(b))}</b>${b.size?.score ? ` <small class="muted">AI estimate${b.size.confidence ? `, ${esc(b.size.confidence)} confidence` : ''}${b.size.basis ? `: ${esc(b.size.basis)}` : ''}</small>` : ''}</p>` : ''}
       ${(() => {
         const autoIds = photos.filter((p) => p.buckAuto).map((p) => p.id);
         if (!b.auto && !autoIds.length) return '';
@@ -351,6 +362,14 @@ export function bindBucks(el, rerender, params) {
   });
   cleanAutoBuckNames().catch(() => {});
   el.querySelectorAll('[data-bfilter]').forEach((x) => x.addEventListener('click', () => { ui.filter = x.dataset.bfilter; rerender(); }));
+  el.querySelectorAll('[data-border]').forEach((x) => x.addEventListener('click', () => db.saveSettings({ buckOrder: x.dataset.border })));
+  el.querySelector('[data-size-up]')?.addEventListener('click', async () => {
+    const again = !db.all('bucks').some((b) => !b.size && buckRefIds(b).length);
+    ui.sizeBusy = true; rerender();
+    try { const n = await sizePendingBucks({ all: again, batches: 3 }); toast(n ? `Sized up ${plural(n, 'buck')}` : 'Nothing to size up'); }
+    catch (err) { toast(`Couldn't size up: ${err.message}`); }
+    ui.sizeBusy = false; rerender();
+  });
   el.querySelector('[data-jump="bucks"]')?.addEventListener('click', () => el.querySelector('#bucks')?.scrollIntoView({ behavior: 'smooth' }));
   el.querySelector('[data-dedupe]')?.addEventListener('click', async () => {
     const f = FILTERS.find((x) => x[0] === ui.filter) || FILTERS[0];

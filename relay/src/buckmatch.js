@@ -145,6 +145,81 @@ export async function dedupeBucks(env, body) {
   return { model, result: out };
 }
 
+const SIZE_SYSTEM = `You size up white-tailed deer bucks from trail-camera photos for a ranch owner in Mason County, Texas (Hill Country deer: a mature buck here usually grosses 110-150 inches; 160+ is exceptional).
+For each buck you get his clearest photos. Estimate from the antlers and body:
+- points: total scoreable points (tines at least 1 inch, plus beam tips), both sides together.
+- spread_in: inside spread in inches. A Hill Country buck's ears are about 14-15 inches tip to tip in the alert, ears-out pose; compare the beams to that.
+- score: rough gross Boone & Crockett score in inches (beams, tines, spread, mass together).
+- age: age class from body (neck, chest and belly sag, legs looking short, face), not the rack alone.
+Lighting, fog, night/infrared, blur and camera angle are not differences in size. A head-on or side photo hides points or spread: estimate what the photos show, lower your confidence, and say what limited it. If the antlers can't be judged at all (velvet nubs, never seen with his head up), give 0 for that number and low confidence. Never round up to make a buck sound bigger.`;
+
+/**
+ * Size up bucks from their reference photos so the app can rank them.
+ * body: { bucks: [{ id, name, refs: [base64…] }] }
+ */
+export async function sizeBucks(env, body) {
+  if (!env.ANTHROPIC_API_KEY) throw Object.assign(new Error('Sizing bucks needs an ANTHROPIC_API_KEY on the relay'), { status: 400 });
+  const strip = (x) => String(x || '').replace(/^data:image\/\w+;base64,/, '');
+  const bucks = (Array.isArray(body?.bucks) ? body.bucks : [])
+    .map((b) => ({ id: String(b.id || '').slice(0, 40), name: String(b.name || 'Buck').slice(0, 40), refs: (b.refs || []).map(strip).filter((r) => r.length >= 1000).slice(0, 3) }))
+    .filter((b) => b.id && b.refs.length).slice(0, 10);
+  if (!bucks.length) throw Object.assign(new Error('No bucks with photos to size up'), { status: 400 });
+
+  const tz = env.RANCH_TZ || 'America/Chicago';
+  const today = localDate(Date.now(), tz);
+  const limit = Number(env.BUCK_MATCH_DAILY_LIMIT || 80);
+  const day = (await kvGet(env, 'buck_day')) || {};
+  const used = day.date === today ? day.n : 0;
+  if (used >= limit) throw Object.assign(new Error(`Daily buck-matching limit reached (${limit}). It picks up again tomorrow.`), { status: 429 });
+  await kvSet(env, 'buck_day', { date: today, n: used + 1 });
+
+  const ids = bucks.map((b) => b.id);
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['bucks'],
+    properties: {
+      bucks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'points', 'spread_in', 'score', 'age', 'confidence', 'basis'],
+          properties: {
+            id: { type: 'string', enum: ids },
+            points: { type: 'integer', description: 'Total points, both sides; 0 if you can\'t tell.' },
+            spread_in: { type: 'integer', description: 'Inside spread in inches; 0 if you can\'t tell.' },
+            score: { type: 'integer', description: 'Rough gross B&C inches; 0 if you can\'t tell.' },
+            age: { type: 'string', enum: ['1.5', '2.5', '3.5', '4.5', '5.5', 'unknown'] },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            basis: { type: 'string', description: 'One short line: what the estimate rests on, e.g. "main-frame 10, beams past the nose, spread just outside the ears; side view only".' },
+          },
+        },
+      },
+    },
+  };
+  const content = [{ type: 'text', text: `Bucks to size up (${bucks.length}):` }];
+  for (const b of bucks) {
+    content.push({ type: 'text', text: `Buck id "${b.id}", named "${b.name}":` });
+    for (const r of b.refs) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r } });
+  }
+  content.push({ type: 'text', text: 'Size up every buck: points, inside spread, rough gross score and age class.' });
+
+  const model = env.BUCK_MATCH_MODEL || 'claude-opus-5';
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 120_000, maxRetries: 1 });
+  const res = await client.beta.messages.create({
+    model, max_tokens: 4000, system: SIZE_SYSTEM,
+    messages: [{ role: 'user', content }],
+    ...modelOptions(model, schema, 'medium'),
+  });
+  if (res.stop_reason === 'refusal') throw Object.assign(new Error('The model declined to size these bucks'), { status: 422 });
+  const out = JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  // Keep the numbers in a believable range; anything else means "couldn't tell".
+  const inRange = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? Math.round(v) : 0);
+  out.bucks = (out.bucks || []).filter((b) => ids.includes(b.id)).map((b) => ({ ...b, points: inRange(b.points, 2, 30), spread_in: inRange(b.spread_in, 6, 32), score: inRange(b.score, 40, 260) }));
+  return { model, result: out };
+}
+
 /**
  * Sort a batch of unidentified buck photos into named bucks and new groups.
  * body: { photos: [base64…] (≤12), bucks: [{ id, name, refs: [base64…] }] }

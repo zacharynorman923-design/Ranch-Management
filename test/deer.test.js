@@ -292,3 +292,23 @@ test('twin bucks: two AI bucks on a one-buck photo are merged, real pairs are no
   const plan = D.planTwinMerges(bucks, photos);
   assert.deepEqual(plan.sort((x, y) => x.from.localeCompare(y.from)), [{ from: 'b', into: 'a' }, { from: 'c', into: 'a' }]);
 });
+
+test('buck size: AI estimate, your points win, names as a last resort; biggest first', () => {
+  const bucks = [
+    { id: 'a', name: 'Split Brow 8', size: { score: 128, points: 8, spread: 17, age: '4.5', confidence: 'medium', refs: 'r1' } },
+    { id: 'b', name: 'Tall 10', size: { score: 141, points: 10, spread: 18, age: '5.5', refs: 'r2' } },
+    { id: 'c', name: 'Kicker 9' }, // never sized: 9 from the name ≈ 108
+    { id: 'd', name: 'Buck 3' }, // placeholder name: nothing known
+    { id: 'e', name: 'Wide one', points: 6, age: '2.5', size: { score: 0, points: 0, spread: 0, age: 'unknown', refs: 'old' } },
+  ];
+  assert.deepEqual(D.buckSize(bucks[0]), { score: 128, points: 8, spread: 17, age: '4.5', confidence: 'medium', basis: '', src: 'ai' });
+  assert.equal(D.buckSize(bucks[2]).points, 9);
+  assert.equal(D.buckSize(bucks[3]).points, 0);
+  assert.deepEqual([D.buckSize(bucks[4]).points, D.buckSize(bucks[4]).age, D.buckSize(bucks[4]).src], [6, '2.5', 'you']);
+  assert.deepEqual([...bucks].sort(D.bySize).map((b) => b.id), ['b', 'a', 'c', 'e', 'd']);
+  assert.equal(D.sizeLine(bucks[1]), '~141″ · 10 pts · 18″ wide · 5½+ yrs');
+  assert.equal(D.sizeLine(bucks[3]), '');
+  // Sized again only when never sized or his reference photos changed.
+  const keys = { a: 'r1', b: 'r2-new', c: 'r3', d: '', e: 'old' };
+  assert.deepEqual(D.needsSizing(bucks, (b) => keys[b.id]).map((b) => b.id), ['b', 'c']);
+});

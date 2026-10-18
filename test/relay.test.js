@@ -108,7 +108,7 @@ test('relay pulls photos, rain and camera health, then serves them to the app', 
 
   const st = await (await call(env, '/status')).json();
   assert.equal(st.counts.photos, 2);
-  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false, buckDedupe: false, relabel: false });
+  assert.deepEqual(st.sources, { tactacam: true, ambient: true, estimate: true, classifier: false, brushScan: false, buckMatch: false, buckSort: false, buckDedupe: false, buckSize: false, relabel: false });
 });
 
 test('a bad Tactacam password is reported on /status, rain still runs', { timeout: 30000 }, async (t) => {
@@ -513,6 +513,34 @@ test('buck-sort: a deer followed through a visit keeps his group without a clear
   assert.deepEqual([g(6).group, g(6).confidence], ['new1', 'medium']);
   assert.equal(g(7).group, 'unsure');
   assert.equal(g(1).tracked, undefined);
+});
+
+test('buck-size: estimates per buck, numbers kept believable', { timeout: 30000 }, async (t) => {
+  const sent = [];
+  const reply = { bucks: [
+    { id: 'b1', points: 10, spread_in: 18, score: 141, age: '5.5', confidence: 'medium', basis: 'main-frame 10, side view' },
+    { id: 'b2', points: 44, spread_in: 3, score: 999, age: 'unknown', confidence: 'low', basis: 'head down' },
+    { id: 'zz', points: 8, spread_in: 15, score: 120, age: '3.5', confidence: 'high', basis: 'not asked about' },
+  ] };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const req = url instanceof Request ? url : new Request(String(url), opts);
+    sent.push(JSON.parse(await req.text()));
+    return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify(reply) }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const env = { DB: fakeD1(), RELAY_TOKEN: 'secret', ANTHROPIC_API_KEY: 'k' };
+  const img = 'data:image/jpeg;base64,' + 'C'.repeat(2000);
+  const r = await call(env, '/buck-size', { method: 'POST', body: JSON.stringify({ bucks: [{ id: 'b1', name: 'Tall 10', refs: [img, img] }, { id: 'b2', name: 'Buck 2', refs: [img] }] }), headers: { 'Content-Type': 'application/json' } });
+  assert.equal(r.status, 200);
+  const out = (await r.json()).result.bucks;
+  assert.deepEqual(out.map((b) => [b.id, b.points, b.spread_in, b.score]), [['b1', 10, 18, 141], ['b2', 0, 0, 0]]);
+  assert.match(sent[0].system, /Hill Country/);
+  assert.match(sent[0].system, /Never round up/);
+  assert.deepEqual(sent[0].output_config.format.schema.properties.bucks.items.properties.id.enum, ['b1', 'b2']);
+  assert.equal(sent[0].messages[0].content.filter((c) => c.type === 'image').length, 3);
+  assert.equal((await call(env, '/buck-size', { method: 'POST', body: JSON.stringify({ bucks: [] }) })).status, 400);
 });
 
 test('buck-dedupe: compares named bucks, ignores conditions, drops self-pairs', { timeout: 30000 }, async (t) => {
