@@ -7,7 +7,7 @@
 import * as db from './db.js';
 import * as C from './calc.js';
 import { addPhotoFile, photoURL, photoTags, shrinkImage, imageSize } from './photos.js';
-import { deerCounts, planBuckSort, sortBatches, planVisitCarry, planTwinMerges, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
+import { deerCounts, planBuckSort, sortBatches, planVisitCarry, planTwinMerges, needsSizing, photoBucks, hasBuck, withBucks, cleanBuckName, cleanRack, planReset, BUCK_FIELDS } from './deer.js';
 
 export const AUTO_GAUGE = 'Rain gauge (auto)';
 export const AUTO_EST = 'Weather-model estimate (auto)';
@@ -370,6 +370,7 @@ async function runSort({ batches = 2, all = false } = {}) {
     }
   }
   out.merged = await mergeTwinBucks();
+  out.sized = await sizePendingBucks().catch(() => 0); // new bucks and new reference photos get sized up
   await db.saveSettings({ buckSortLast: { ...out, at: new Date().toISOString() } });
   return out;
 }
@@ -393,6 +394,42 @@ export async function mergeBucks(fromId, intoId) {
   const name = String(into.name).replace(/\s+\d+$/, '') === b.name ? b.name : into.name;
   await db.put('bucks', { ...db.get('bucks', into.id), name, refs: [...new Set([...(into.refs || []), ...(b.refs || [])])].slice(0, 3), notSame: [...new Set([...(into.notSame || []), ...(b.notSame || [])])].filter((x) => x !== into.id && x !== b.id) });
   await db.del('bucks', b.id);
+}
+
+/* ------------------------------ buck size -------------------------------- */
+const SIZE_BATCH = 10;
+const sizeKey = (b) => buckRefIds(b).slice(0, 3).join(',');
+/**
+ * Have the AI estimate points, spread, gross score and age for bucks not sized
+ * yet (or whose reference photos changed). all: size every active buck again.
+ * Returns how many were sized.
+ */
+export async function sizePendingBucks({ all = false, batches = 2 } = {}) {
+  if (!db.settings().relayInfo?.sources?.buckSize) return 0;
+  let n = 0;
+  const done = new Set();
+  for (let k = 0; k < batches; k++) {
+    const active = db.all('bucks').filter((b) => (b.status || 'active') === 'active' && !done.has(b.id));
+    const todo = (all ? active.filter((b) => sizeKey(b)) : needsSizing(active, sizeKey)).slice(0, SIZE_BATCH);
+    if (!todo.length) break;
+    const bucks = [];
+    for (const b of todo) {
+      done.add(b.id);
+      const refs = [];
+      for (const id of buckRefIds(b).slice(0, 3)) { const u = await photoURL(id); if (u) refs.push(await shrinkImage(u, 800)); }
+      if (refs.length) bucks.push({ id: b.id, name: b.name, refs });
+    }
+    if (!bucks.length) continue;
+    const r = await call('/buck-size', { method: 'POST', body: { bucks }, timeout: 150_000 });
+    const at = new Date().toISOString();
+    const writes = (r.result?.bucks || []).map((x) => {
+      const b = db.get('bucks', x.id);
+      return b && { ...b, size: { score: x.score || 0, points: x.points || 0, spread: x.spread_in || 0, age: x.age || '', confidence: x.confidence || '', basis: x.basis || '', at, refs: sizeKey(b) } };
+    }).filter(Boolean);
+    if (writes.length) await db.putMany('bucks', writes);
+    n += writes.length;
+  }
+  return n;
 }
 
 /** Merge bucks the AI made twice from the same deer (see planTwinMerges). Returns how many went. */

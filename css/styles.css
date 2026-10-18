@@ -645,3 +645,11 @@ dialog.viewer.moving::after { content: attr(data-hint); position: absolute; left
 /* The AI's suggested buck: dashed until you say yes */
 .spot.guess { border-style: dashed; }
 .spot.guess span { opacity: .9; }
+
+/* Buck tracker: sort order and sizes */
+.bt-order { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 8px; }
+.bt-order .chip { padding-left: 10px; padding-right: 10px; }
+.bt-order .chip { flex: none; }
+.bt-size-note { margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.bt-meta.bt-size { color: var(--text, inherit); font-weight: 600; white-space: normal; line-height: 1.3; }
+.bd-size { margin: 4px 0 8px; }

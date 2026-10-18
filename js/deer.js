@@ -267,6 +267,41 @@ export function planTwinMerges(bucks, photos) {
   return [...parent.keys()].filter((x) => root(x) !== x).map((x) => ({ from: x, into: root(x) }));
 }
 
+/* ------------------------------ buck size --------------------------------
+   b.size = { score, points, spread, age, confidence, basis, at, refs } from
+   the AI (sizing his reference photos). Points and age you enter win. */
+/** How big a buck is, as best known. Every number is 0 when unknown. */
+export function buckSize(b) {
+  const ai = b?.size || {};
+  // "Tall 10", "9 Point" — but not a placeholder like "Buck 3".
+  const named = /^buck\s+\d+$/i.test(String(b?.name || '').trim()) ? null : String(b?.name || '').match(/\b(\d{1,2})(?:\s*(?:pt|point)s?)?\b/i);
+  const mine = Number(b?.points) || 0;
+  const points = mine || ai.points || (named ? Number(named[1]) : 0);
+  return {
+    score: ai.score || 0, points, spread: ai.spread || 0,
+    age: b?.age || (ai.age && ai.age !== 'unknown' ? ai.age : ''),
+    confidence: ai.confidence || '', basis: ai.basis || '',
+    src: ai.score ? 'ai' : mine ? 'you' : points ? 'name' : '',
+  };
+}
+/** Biggest first: estimated score, then points, then spread, then age. Unknown sizes go last. */
+export function bySize(a, b) {
+  const x = buckSize(a), y = buckSize(b);
+  // A buck with points but no score yet ranks as a rough 12 inches a point, so he isn't stuck below every sized one.
+  const est = (z) => z.score || z.points * 12;
+  return (est(y) - est(x)) || (y.points - x.points) || (y.spread - x.spread) || (Number(y.age) || 0) - (Number(x.age) || 0);
+}
+/** "~135″ · 10 pts · 21″ wide · 4½" or '' when nothing's known. */
+export function sizeLine(b) {
+  const z = buckSize(b);
+  const age = z.age ? `${String(z.age).replace('.5', '½')}${z.age === '5.5' ? '+' : ''} yrs` : '';
+  return [z.score && `~${z.score}″`, z.points && `${z.points} pts`, z.spread && `${z.spread}″ wide`, age].filter(Boolean).join(' · ');
+}
+/** Which bucks need sizing: none yet, or his reference photos changed since. refKey(b) names his current refs. */
+export function needsSizing(bucks, refKey) {
+  return bucks.filter((b) => { const k = refKey(b); return k && (!b.size || b.size.refs !== k); });
+}
+
 /** Shots this close together on one camera are one visit for auto-sort. */
 export const SORT_GAP_MIN = 5;
 /**
